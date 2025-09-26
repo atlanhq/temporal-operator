@@ -1,0 +1,16 @@
+name: temporal-operator
+id: ari:cloud:compass:ab230fbd-f58b-455c-b827-5e7b862fca76:component/5f7e7797-0b2b-41b5-8f36-0f91364f7707/7a099009-4a5a-4425-a7f2-6fc30ddc2c95
+description: Temporal Kubernetes Operator
+configVersion: 1
+typeId: SERVICE
+fields:
+  tier: 4
+links:
+  - name: null
+    type: REPOSITORY
+    url: https://github.com/atlanhq/temporal-operator
+relationships:
+  DEPENDS_ON: []
+labels:
+  - source:github
+customFields: null
