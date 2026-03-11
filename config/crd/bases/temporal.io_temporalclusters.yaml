@@ -4076,6 +4076,26 @@ spec:
                     Version defines the temporal version the cluster to be deployed.
                     This version impacts the underlying persistence schemas versions.
                   type: string
+                versionUpgrade:
+                  description: |-
+                    VersionUpgrade configures multi-hop version upgrade behavior.
+                    When set, the operator can automatically walk through intermediate versions
+                    when the target version is more than one minor version ahead.
+                  properties:
+                    intermediateVersions:
+                      description: |-
+                        IntermediateVersions optionally specifies exact versions to use for intermediate hops,
+                        in ascending order. If not provided, the operator uses its built-in recommended versions registry.
+                        Example: ["1.26.3", "1.27.4"] for upgrading from 1.25.x to 1.28.x.
+                      items:
+                        type: string
+                      type: array
+                    stabilityDuration:
+                      description: |-
+                        StabilityDuration is the time to wait after all services are Ready at an
+                        intermediate version before starting the next hop. Defaults to 0 (immediate).
+                      type: string
+                  type: object
               required:
                 - numHistoryShards
                 - persistence
