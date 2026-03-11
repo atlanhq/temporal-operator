@@ -3,8 +3,7 @@ name: Publish Operator Image
 on:
   push:
     branches:
-      - main-stable
-      - main-0.22
+      - main-0.22-atlan-0.1
 
 env:
   REGISTRY: ghcr.io
