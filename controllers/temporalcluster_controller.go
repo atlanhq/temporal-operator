@@ -62,6 +62,12 @@ import (
 
 const (
 	ownerKey = ".metadata.controller"
+
+	// Annotations used to track multi-hop upgrade stability timing.
+	// These are set on the TemporalCluster object to persist hop completion time
+	// across reconcile cycles (including watch-triggered reconciles that bypass RequeueAfter).
+	annotationLastHopTime    = "temporal.io/last-intermediate-hop-time"
+	annotationLastHopVersion = "temporal.io/last-intermediate-hop-version"
 )
 
 // TemporalClusterReconciler reconciles a Cluster object.
@@ -122,6 +128,18 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}()
 
+	// Multi-hop stability gate: if we recently completed an intermediate hop,
+	// wait for the stability duration before proceeding to the next hop.
+	// This check runs BEFORE computing effectiveVersion to short-circuit
+	// watch-triggered reconciles (deployment changes, job completions) that
+	// would otherwise bypass the RequeueAfter timer.
+	if remaining, waiting := r.remainingStabilityWait(cluster); waiting {
+		logger.Info("In stability wait period between hops",
+			"lastHopVersion", cluster.GetAnnotations()[annotationLastHopVersion],
+			"remaining", remaining)
+		return reconcile.Result{RequeueAfter: remaining}, nil
+	}
+
 	// Multi-hop version upgrade: compute the effective version for this reconcile cycle.
 	// If the target is multiple minor versions ahead, we step through one minor at a time.
 	targetVersion := cluster.Spec.Version
@@ -154,6 +172,10 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}()
 	}
 
+	// Clear hop annotations if we're past the stability wait (they were checked above).
+	// This keeps annotations clean once we've moved on to the next hop.
+	r.clearHopAnnotations(cluster)
+
 	// Check the ready condition
 	cond, exists := v1beta1.GetTemporalClusterReadyCondition(cluster)
 	if !exists || cond.ObservedGeneration != cluster.GetGeneration() {
@@ -179,15 +201,29 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	if multiHopInProgress {
-		// Current hop completed. Requeue after stability duration to start next hop.
+		// Guard: do not advance to the next hop until the cluster is fully ready
+		// at the current intermediate version. This prevents version gaps where
+		// schema is ahead of running pods, which can cause crashes or data corruption.
+		if !status.IsClusterReady(cluster) {
+			logger.Info("Waiting for cluster to be ready at intermediate version before next hop",
+				"effectiveVersion", effectiveVersion.String(),
+				"targetVersion", targetVersion.String())
+			return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+
+		// Cluster is ready at intermediate version. Record the hop completion time
+		// in annotations so it persists across watch-triggered reconciles.
 		stabilityDuration := r.getStabilityDuration(cluster)
-		logger.Info("Intermediate hop completed, waiting before next hop",
+		r.setHopCompletionAnnotation(cluster, effectiveVersion)
+		logger.Info("Intermediate hop completed and cluster ready, starting stability wait",
 			"completedVersion", effectiveVersion.String(),
 			"targetVersion", targetVersion.String(),
 			"stabilityDuration", stabilityDuration)
 		return r.handleSuccessWithRequeue(cluster, stabilityDuration)
 	}
 
+	// Final version reached or single-hop upgrade. Clean up any leftover hop annotations.
+	r.clearHopAnnotations(cluster)
 	return r.handleSuccess(cluster)
 }
 
@@ -317,19 +353,27 @@ func (r *TemporalClusterReconciler) handleErrorWithRequeue(cluster *v1beta1.Temp
 }
 
 // getCurrentVersion returns the current running version of the cluster.
-// It uses the schema version as the authoritative source, falling back to status.version.
+// It uses status.version (the version all services are reporting) as the authoritative
+// source. This ensures multi-hop upgrades do not advance to the next hop until the
+// server is actually deployed and running at the intermediate version.
+// Falls back to schema version for clusters mid-migration, then to spec.version
+// for first install.
 func (r *TemporalClusterReconciler) getCurrentVersion(cluster *v1beta1.TemporalCluster) *version.Version {
-	if cluster.Status.Persistence != nil &&
-		cluster.Status.Persistence.DefaultStore != nil &&
-		cluster.Status.Persistence.DefaultStore.SchemaVersion != nil {
-		return cluster.Status.Persistence.DefaultStore.SchemaVersion
-	}
-
+	// Prefer status.version: this is only set when ObservedVersionMatchesDesiredVersion
+	// returns true, meaning all service deployments report the correct version.
 	if cluster.Status.Version != "" {
 		v, err := version.NewVersionFromString(cluster.Status.Version)
 		if err == nil {
 			return v
 		}
+	}
+
+	// Fallback to schema version for clusters that have completed schema migrations
+	// but haven't yet had status.version set (e.g., operator restart mid-upgrade).
+	if cluster.Status.Persistence != nil &&
+		cluster.Status.Persistence.DefaultStore != nil &&
+		cluster.Status.Persistence.DefaultStore.SchemaVersion != nil {
+		return cluster.Status.Persistence.DefaultStore.SchemaVersion
 	}
 
 	// No current version known (first install), use spec version directly
@@ -359,6 +403,67 @@ func (r *TemporalClusterReconciler) getStabilityDuration(cluster *v1beta1.Tempor
 		return cluster.Spec.VersionUpgrade.StabilityDuration.Duration
 	}
 	return 0
+}
+
+// remainingStabilityWait checks if the cluster is in a stability wait period
+// from a recently completed intermediate hop. Returns the remaining duration
+// and true if still waiting, or (0, false) if not.
+// Uses annotations to persist timing across watch-triggered reconciles.
+func (r *TemporalClusterReconciler) remainingStabilityWait(cluster *v1beta1.TemporalCluster) (time.Duration, bool) {
+	annotations := cluster.GetAnnotations()
+	if annotations == nil {
+		return 0, false
+	}
+
+	hopTimeStr, ok := annotations[annotationLastHopTime]
+	if !ok {
+		return 0, false
+	}
+
+	hopTime, err := time.Parse(time.RFC3339, hopTimeStr)
+	if err != nil {
+		return 0, false
+	}
+
+	stabilityDuration := r.getStabilityDuration(cluster)
+	if stabilityDuration == 0 {
+		return 0, false
+	}
+
+	elapsed := time.Since(hopTime)
+	if elapsed >= stabilityDuration {
+		return 0, false
+	}
+
+	return stabilityDuration - elapsed, true
+}
+
+// setHopCompletionAnnotation records the completion of an intermediate hop
+// so the stability timer persists across watch-triggered reconciles.
+func (r *TemporalClusterReconciler) setHopCompletionAnnotation(cluster *v1beta1.TemporalCluster, v *version.Version) {
+	annotations := cluster.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	annotations[annotationLastHopTime] = time.Now().UTC().Format(time.RFC3339)
+	annotations[annotationLastHopVersion] = v.String()
+	cluster.SetAnnotations(annotations)
+}
+
+// clearHopAnnotations removes the intermediate hop tracking annotations.
+func (r *TemporalClusterReconciler) clearHopAnnotations(cluster *v1beta1.TemporalCluster) {
+	annotations := cluster.GetAnnotations()
+	if annotations == nil {
+		return
+	}
+	_, hasTime := annotations[annotationLastHopTime]
+	_, hasVersion := annotations[annotationLastHopVersion]
+	if !hasTime && !hasVersion {
+		return
+	}
+	delete(annotations, annotationLastHopTime)
+	delete(annotations, annotationLastHopVersion)
+	cluster.SetAnnotations(annotations)
 }
 
 // SetupWithManager sets up the controller with the Manager.
