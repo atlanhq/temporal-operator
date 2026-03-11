@@ -57,6 +57,7 @@ import (
 	"github.com/alexandrevilain/temporal-operator/internal/resource/prometheus"
 	"github.com/alexandrevilain/temporal-operator/internal/resource/ui"
 	"github.com/alexandrevilain/temporal-operator/pkg/status"
+	"github.com/alexandrevilain/temporal-operator/pkg/version"
 )
 
 const (
@@ -121,6 +122,38 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}()
 
+	// Multi-hop version upgrade: compute the effective version for this reconcile cycle.
+	// If the target is multiple minor versions ahead, we step through one minor at a time.
+	targetVersion := cluster.Spec.Version
+	effectiveVersion, err := r.computeEffectiveVersion(cluster)
+	if err != nil {
+		logger.Error(err, "Can't compute effective upgrade version")
+		return r.handleErrorWithRequeue(cluster, v1beta1.ReconcileErrorReason, err, 5*time.Second)
+	}
+	if effectiveVersion == nil {
+		effectiveVersion = targetVersion
+	}
+
+	multiHopInProgress := targetVersion != nil && effectiveVersion.String() != targetVersion.String()
+	if multiHopInProgress {
+		logger.Info("Multi-hop upgrade in progress",
+			"current", r.getCurrentVersion(cluster).String(),
+			"effectiveHop", effectiveVersion.String(),
+			"target", targetVersion.String())
+		// IMPORTANT: Temporarily set spec.version to the intermediate hop so all builders
+		// (schema migration, deployments) use the correct intermediate version.
+		// Restored before the patch helper runs (defers execute LIFO).
+		//
+		// CONTRACT: During reconciliation, do NOT:
+		// - Read cluster.Spec.Version in a goroutine (it will see the intermediate version)
+		// - Add defers between this block and the patch helper defer above
+		// - Cache cluster.Spec.Version before this point and use it after
+		cluster.Spec.Version = effectiveVersion
+		defer func() {
+			cluster.Spec.Version = targetVersion
+		}()
+	}
+
 	// Check the ready condition
 	cond, exists := v1beta1.GetTemporalClusterReadyCondition(cluster)
 	if !exists || cond.ObservedGeneration != cluster.GetGeneration() {
@@ -143,6 +176,16 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if err := r.reconcileResources(ctx, cluster); err != nil {
 		logger.Error(err, "Can't reconcile resources")
 		return r.handleErrorWithRequeue(cluster, v1beta1.ResourcesReconciliationFailedReason, err, 2*time.Second)
+	}
+
+	if multiHopInProgress {
+		// Current hop completed. Requeue after stability duration to start next hop.
+		stabilityDuration := r.getStabilityDuration(cluster)
+		logger.Info("Intermediate hop completed, waiting before next hop",
+			"completedVersion", effectiveVersion.String(),
+			"targetVersion", targetVersion.String(),
+			"stabilityDuration", stabilityDuration)
+		return r.handleSuccessWithRequeue(cluster, stabilityDuration)
 	}
 
 	return r.handleSuccess(cluster)
@@ -271,6 +314,51 @@ func (r *TemporalClusterReconciler) handleErrorWithRequeue(cluster *v1beta1.Temp
 	}
 	v1beta1.SetTemporalClusterReconcileError(cluster, metav1.ConditionTrue, reason, err.Error())
 	return reconcile.Result{RequeueAfter: requeueAfter}, err
+}
+
+// getCurrentVersion returns the current running version of the cluster.
+// It uses the schema version as the authoritative source, falling back to status.version.
+func (r *TemporalClusterReconciler) getCurrentVersion(cluster *v1beta1.TemporalCluster) *version.Version {
+	if cluster.Status.Persistence != nil &&
+		cluster.Status.Persistence.DefaultStore != nil &&
+		cluster.Status.Persistence.DefaultStore.SchemaVersion != nil {
+		return cluster.Status.Persistence.DefaultStore.SchemaVersion
+	}
+
+	if cluster.Status.Version != "" {
+		v, err := version.NewVersionFromString(cluster.Status.Version)
+		if err == nil {
+			return v
+		}
+	}
+
+	// No current version known (first install), use spec version directly
+	return cluster.Spec.Version
+}
+
+// computeEffectiveVersion returns the version to target for this reconcile cycle.
+// For single-hop upgrades, this is just spec.version.
+// For multi-hop upgrades, this is the next intermediate version.
+func (r *TemporalClusterReconciler) computeEffectiveVersion(cluster *v1beta1.TemporalCluster) (*version.Version, error) {
+	current := r.getCurrentVersion(cluster)
+	target := cluster.Spec.Version
+
+	// If user provided explicit intermediate versions, use those
+	if cluster.Spec.VersionUpgrade != nil && len(cluster.Spec.VersionUpgrade.IntermediateVersions) > 0 {
+		return version.NextUpgradeHopFromPath(current, target, cluster.Spec.VersionUpgrade.IntermediateVersions)
+	}
+
+	// Otherwise use the built-in registry
+	return version.NextUpgradeHop(current, target)
+}
+
+// getStabilityDuration returns the configured stability duration between upgrade hops.
+func (r *TemporalClusterReconciler) getStabilityDuration(cluster *v1beta1.TemporalCluster) time.Duration {
+	if cluster.Spec.VersionUpgrade != nil &&
+		cluster.Spec.VersionUpgrade.StabilityDuration != nil {
+		return cluster.Spec.VersionUpgrade.StabilityDuration.Duration
+	}
+	return 0
 }
 
 // SetupWithManager sets up the controller with the Manager.

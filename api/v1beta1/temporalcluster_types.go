@@ -1006,6 +1006,21 @@ func (GCSArchiver) CredentialsFileMountPath() string {
 	return "/etc/archival/credentials.json"
 }
 
+// VersionUpgradeSpec configures multi-hop version upgrade behavior.
+// When the target version is more than one minor version ahead, the operator
+// automatically walks through intermediate versions one hop at a time.
+type VersionUpgradeSpec struct {
+	// StabilityDuration is the time to wait after all services are Ready at an
+	// intermediate version before starting the next hop. Defaults to 0 (immediate).
+	// +optional
+	StabilityDuration *metav1.Duration `json:"stabilityDuration,omitempty"`
+	// IntermediateVersions optionally specifies exact versions to use for intermediate hops,
+	// in ascending order. If not provided, the operator uses its built-in recommended versions registry.
+	// Example: ["1.26.3", "1.27.4"] for upgrading from 1.25.x to 1.28.x.
+	// +optional
+	IntermediateVersions []string `json:"intermediateVersions,omitempty"`
+}
+
 // TemporalClusterSpec defines the desired state of Cluster.
 type TemporalClusterSpec struct {
 	// Image defines the temporal server docker image the cluster should use for each services.
@@ -1064,6 +1079,11 @@ type TemporalClusterSpec struct {
 	// Authorization allows authorization configuration for the temporal cluster.
 	// +optional
 	Authorization *AuthorizationSpec `json:"authorization,omitempty"`
+	// VersionUpgrade configures multi-hop version upgrade behavior.
+	// When set, the operator can automatically walk through intermediate versions
+	// when the target version is more than one minor version ahead.
+	// +optional
+	VersionUpgrade *VersionUpgradeSpec `json:"versionUpgrade,omitempty"`
 }
 
 // ServiceStatus reports a service status.
