@@ -223,6 +223,7 @@ func (w *TemporalClusterWebhook) validateCluster(cluster *v1beta1.TemporalCluste
 
 	// Validate user-specified intermediate versions for multi-hop upgrades.
 	if cluster.Spec.VersionUpgrade != nil {
+		var prevMinor uint64
 		for i, vs := range cluster.Spec.VersionUpgrade.IntermediateVersions {
 			v, err := version.NewVersionFromString(vs)
 			if err != nil {
@@ -257,6 +258,18 @@ func (w *TemporalClusterWebhook) validateCluster(cluster *v1beta1.TemporalCluste
 					),
 				)
 			}
+
+			// Ensure intermediate versions are in ascending order and don't skip minors.
+			if i > 0 && prevMinor > 0 && v.Minor() > prevMinor+1 {
+				errs = append(errs,
+					field.Forbidden(
+						field.NewPath("spec", "versionUpgrade", "intermediateVersions", fmt.Sprintf("[%d]", i)),
+						fmt.Sprintf("intermediate versions skip minor version: gap from 1.%d.x to %s, add the missing intermediate version for 1.%d.x", prevMinor, vs, prevMinor+1),
+					),
+				)
+			}
+
+			prevMinor = v.Minor()
 		}
 	}
 

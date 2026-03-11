@@ -95,12 +95,12 @@ func TestComputeEffectiveVersion(t *testing.T) {
 	r := newReconciler()
 
 	tests := map[string]struct {
-		specVersion    string
-		statusVersion  string
-		schemaVersion  string
-		intermediates  []string
-		expected       string
-		expectError    bool
+		specVersion   string
+		statusVersion string
+		schemaVersion string
+		intermediates []string
+		expected      string
+		expectError   bool
 	}{
 		"single hop returns target": {
 			specVersion:   "1.26.3",
@@ -252,7 +252,7 @@ func TestClearHopAnnotations(t *testing.T) {
 		assert.False(tt, hasVersion)
 	})
 
-	t.Run("no-op when no annotations", func(tt *testing.T) {
+	t.Run("no-op when no annotations", func(_ *testing.T) {
 		cluster := &v1beta1.TemporalCluster{}
 		r.clearHopAnnotations(cluster) // should not panic
 	})
@@ -439,7 +439,7 @@ func TestMultiHopFlowSequencing(t *testing.T) {
 
 	r.setHopCompletionAnnotation(cluster, version.MustNewVersionFromString("1.27.4"))
 
-	remaining, waiting = r.remainingStabilityWait(cluster)
+	_, waiting = r.remainingStabilityWait(cluster)
 	assert.True(t, waiting)
 
 	// Phase 5: Stability expired, final hop.
@@ -545,4 +545,124 @@ func TestNoMultiHopWhenAlreadyAtTarget(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "1.28.2", effective.String())
 	assert.Equal(t, cluster.Spec.Version.String(), effective.String())
+}
+
+// --- getCurrentVersion safety tests ---
+
+func TestGetCurrentVersionStatusSetSchemaAhead(t *testing.T) {
+	r := newReconciler()
+
+	// Critical safety test: when status.version IS set but schema is ahead
+	// (e.g., schema migration completed but pods haven't rolled yet),
+	// getCurrentVersion must return status.version, NOT schema version.
+	// Otherwise computeEffectiveVersion would skip a hop.
+	cluster := &v1beta1.TemporalCluster{
+		Spec: v1beta1.TemporalClusterSpec{
+			Version: version.MustNewVersionFromString("1.28.2"),
+		},
+		Status: v1beta1.TemporalClusterStatus{
+			Version: "1.25.2", // pods are still at 1.25.2
+			Persistence: &v1beta1.TemporalPersistenceStatus{
+				DefaultStore: &v1beta1.DatastoreStatus{
+					SchemaVersion: version.MustNewVersionFromString("1.26.3"), // schema migrated ahead
+				},
+			},
+		},
+	}
+
+	current := r.getCurrentVersion(cluster)
+	// Must return status.version (1.25.2), NOT schema version (1.26.3).
+	assert.Equal(t, "1.25.2", current.String())
+
+	// Verify this produces the correct hop (1.26.3, not 1.27.4)
+	effective, err := r.computeEffectiveVersion(cluster)
+	require.NoError(t, err)
+	assert.Equal(t, "1.26.3", effective.String())
+}
+
+func TestGetCurrentVersionEmptyStatusWithSchemaFallback(t *testing.T) {
+	r := newReconciler()
+
+	// When status.version is empty (never set) and schema version exists,
+	// we fall back to schema version. This handles operator restart mid-migration.
+	cluster := &v1beta1.TemporalCluster{
+		Spec: v1beta1.TemporalClusterSpec{
+			Version: version.MustNewVersionFromString("1.28.2"),
+		},
+		Status: v1beta1.TemporalClusterStatus{
+			Version: "", // never set
+			Persistence: &v1beta1.TemporalPersistenceStatus{
+				DefaultStore: &v1beta1.DatastoreStatus{
+					SchemaVersion: version.MustNewVersionFromString("1.26.3"),
+				},
+			},
+		},
+	}
+
+	current := r.getCurrentVersion(cluster)
+	assert.Equal(t, "1.26.3", current.String())
+}
+
+func TestGetCurrentVersionFirstInstall(t *testing.T) {
+	r := newReconciler()
+
+	// First install: no status, no schema. Should use spec.version.
+	cluster := &v1beta1.TemporalCluster{
+		Spec: v1beta1.TemporalClusterSpec{
+			Version: version.MustNewVersionFromString("1.25.2"),
+		},
+	}
+
+	current := r.getCurrentVersion(cluster)
+	assert.Equal(t, "1.25.2", current.String())
+}
+
+// --- Pause annotation tests ---
+
+func TestIsUpgradePaused(t *testing.T) {
+	r := newReconciler()
+
+	tests := map[string]struct {
+		annotations map[string]string
+		expected    bool
+	}{
+		"no annotations": {
+			annotations: nil,
+			expected:    false,
+		},
+		"pause annotation set to true": {
+			annotations: map[string]string{
+				annotationPauseUpgrade: "true",
+			},
+			expected: true,
+		},
+		"pause annotation set to false": {
+			annotations: map[string]string{
+				annotationPauseUpgrade: "false",
+			},
+			expected: false,
+		},
+		"pause annotation set to empty": {
+			annotations: map[string]string{
+				annotationPauseUpgrade: "",
+			},
+			expected: false,
+		},
+		"other annotations only": {
+			annotations: map[string]string{
+				"some-other": "annotation",
+			},
+			expected: false,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(tt *testing.T) {
+			cluster := &v1beta1.TemporalCluster{}
+			if test.annotations != nil {
+				cluster.Annotations = test.annotations
+			}
+			assert.Equal(tt, test.expected, r.isUpgradePaused(cluster))
+		})
+	}
 }

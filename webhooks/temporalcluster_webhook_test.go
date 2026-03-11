@@ -463,3 +463,85 @@ func TestValidateUpdate(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateIntermediateVersions(t *testing.T) {
+	tests := map[string]struct {
+		object      runtime.Object
+		expectedErr string
+	}{
+		"valid intermediate versions": {
+			object: &v1beta1.TemporalCluster{
+				TypeMeta: v1beta1.TemporalClusterTypeMeta,
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "fake",
+				},
+				Spec: v1beta1.TemporalClusterSpec{
+					Version: version.MustNewVersionFromString("1.28.2"),
+					VersionUpgrade: &v1beta1.VersionUpgradeSpec{
+						IntermediateVersions: []string{"1.26.3", "1.27.4"},
+					},
+				},
+			},
+		},
+		"intermediate versions skip a minor": {
+			object: &v1beta1.TemporalCluster{
+				TypeMeta: v1beta1.TemporalClusterTypeMeta,
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "fake",
+				},
+				Spec: v1beta1.TemporalClusterSpec{
+					Version: version.MustNewVersionFromString("1.28.2"),
+					VersionUpgrade: &v1beta1.VersionUpgradeSpec{
+						IntermediateVersions: []string{"1.26.3", "1.28.1"},
+					},
+				},
+			},
+			expectedErr: "intermediate versions skip minor version",
+		},
+		"intermediate version exceeds target": {
+			object: &v1beta1.TemporalCluster{
+				TypeMeta: v1beta1.TemporalClusterTypeMeta,
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "fake",
+				},
+				Spec: v1beta1.TemporalClusterSpec{
+					Version: version.MustNewVersionFromString("1.27.4"),
+					VersionUpgrade: &v1beta1.VersionUpgradeSpec{
+						IntermediateVersions: []string{"1.26.3", "1.28.2"},
+					},
+				},
+			},
+			expectedErr: "exceeds target version",
+		},
+		"broken intermediate version": {
+			object: &v1beta1.TemporalCluster{
+				TypeMeta: v1beta1.TemporalClusterTypeMeta,
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "fake",
+				},
+				Spec: v1beta1.TemporalClusterSpec{
+					Version: version.MustNewVersionFromString("1.28.2"),
+					VersionUpgrade: &v1beta1.VersionUpgradeSpec{
+						IntermediateVersions: []string{"1.27.0"},
+					},
+				},
+			},
+			expectedErr: "marked as broken",
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(tt *testing.T) {
+			wh := &webhooks.TemporalClusterWebhook{
+				AvailableAPIs: &discovery.AvailableAPIs{},
+			}
+			_, err := wh.ValidateCreate(context.Background(), test.object)
+			if test.expectedErr != "" {
+				assert.Error(tt, err)
+				assert.Contains(tt, err.Error(), test.expectedErr)
+			} else {
+				assert.NoError(tt, err)
+			}
+		})
+	}
+}

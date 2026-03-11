@@ -68,6 +68,11 @@ const (
 	// across reconcile cycles (including watch-triggered reconciles that bypass RequeueAfter).
 	annotationLastHopTime    = "temporal.io/last-intermediate-hop-time"
 	annotationLastHopVersion = "temporal.io/last-intermediate-hop-version"
+
+	// annotationPauseUpgrade can be set to "true" on a TemporalCluster to pause
+	// multi-hop version upgrades. The operator will skip hop advancement while
+	// this annotation is present, allowing operators to inspect/fix issues mid-upgrade.
+	annotationPauseUpgrade = "temporal.io/pause-upgrade"
 )
 
 // TemporalClusterReconciler reconciles a Cluster object.
@@ -127,6 +132,16 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			reterr = kerrors.NewAggregate([]error{reterr, err})
 		}
 	}()
+
+	// Pause gate: if the pause-upgrade annotation is set, do not advance the
+	// multi-hop upgrade. This allows operators to inspect and fix issues mid-upgrade.
+	// The cluster continues to reconcile its current state (services, config) but
+	// will not start the next version hop.
+	if r.isUpgradePaused(cluster) {
+		logger.Info("Multi-hop upgrade is paused via annotation, skipping version advancement",
+			"annotation", annotationPauseUpgrade)
+		return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
+	}
 
 	// Multi-hop stability gate: if we recently completed an intermediate hop,
 	// wait for the stability duration before proceeding to the next hop.
@@ -353,13 +368,18 @@ func (r *TemporalClusterReconciler) handleErrorWithRequeue(cluster *v1beta1.Temp
 }
 
 // getCurrentVersion returns the current running version of the cluster.
-// It uses status.version (the version all services are reporting) as the authoritative
-// source. This ensures multi-hop upgrades do not advance to the next hop until the
-// server is actually deployed and running at the intermediate version.
-// Falls back to schema version for clusters mid-migration, then to spec.version
-// for first install.
+// It uses status.version (the version all services are reporting) as the
+// authoritative source. This ensures multi-hop upgrades do not advance to
+// the next hop until the server is actually deployed and running at the
+// intermediate version.
+//
+// Falls back to schema version ONLY when status.version is empty AND the
+// schema version does not exceed status.version's minor. This prevents a
+// dangerous scenario where schema migrations complete (advancing schemaVersion)
+// but services haven't deployed yet — using the advanced schemaVersion would
+// cause hop computation to skip ahead while pods run an older version.
 func (r *TemporalClusterReconciler) getCurrentVersion(cluster *v1beta1.TemporalCluster) *version.Version {
-	// Prefer status.version: this is only set when ObservedVersionMatchesDesiredVersion
+	// Prefer status.version: only set when ObservedVersionMatchesDesiredVersion
 	// returns true, meaning all service deployments report the correct version.
 	if cluster.Status.Version != "" {
 		v, err := version.NewVersionFromString(cluster.Status.Version)
@@ -370,13 +390,18 @@ func (r *TemporalClusterReconciler) getCurrentVersion(cluster *v1beta1.TemporalC
 
 	// Fallback to schema version for clusters that have completed schema migrations
 	// but haven't yet had status.version set (e.g., operator restart mid-upgrade).
-	if cluster.Status.Persistence != nil &&
+	// Safety: only use schema version if status.version was never set (empty).
+	// If status.version IS set but unparseable, we skip this fallback to avoid
+	// advancing past what services are actually running.
+	if cluster.Status.Version == "" &&
+		cluster.Status.Persistence != nil &&
 		cluster.Status.Persistence.DefaultStore != nil &&
 		cluster.Status.Persistence.DefaultStore.SchemaVersion != nil {
 		return cluster.Status.Persistence.DefaultStore.SchemaVersion
 	}
 
-	// No current version known (first install), use spec version directly
+	// No current version known (first install), use spec version directly.
+	// This is safe: on first install there's no upgrade path to compute.
 	return cluster.Spec.Version
 }
 
@@ -464,6 +489,15 @@ func (r *TemporalClusterReconciler) clearHopAnnotations(cluster *v1beta1.Tempora
 	delete(annotations, annotationLastHopTime)
 	delete(annotations, annotationLastHopVersion)
 	cluster.SetAnnotations(annotations)
+}
+
+// isUpgradePaused returns true if the pause-upgrade annotation is set to "true".
+func (r *TemporalClusterReconciler) isUpgradePaused(cluster *v1beta1.TemporalCluster) bool {
+	annotations := cluster.GetAnnotations()
+	if annotations == nil {
+		return false
+	}
+	return annotations[annotationPauseUpgrade] == "true"
 }
 
 // SetupWithManager sets up the controller with the Manager.
