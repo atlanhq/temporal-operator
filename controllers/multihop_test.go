@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 func newReconciler() *TemporalClusterReconciler {
@@ -666,4 +667,127 @@ func TestIsUpgradePaused(t *testing.T) {
 			assert.Equal(tt, test.expected, r.isUpgradePaused(cluster))
 		})
 	}
+}
+
+// --- Hop timeout tests ---
+
+func TestEnsureHopStartAnnotation(t *testing.T) {
+	r := newReconciler()
+
+	t.Run("sets annotation when absent", func(tt *testing.T) {
+		cluster := &v1beta1.TemporalCluster{}
+		r.ensureHopStartAnnotation(cluster)
+		annotations := cluster.GetAnnotations()
+		assert.NotEmpty(tt, annotations[annotationHopStartTime])
+
+		startTime, err := time.Parse(time.RFC3339, annotations[annotationHopStartTime])
+		require.NoError(tt, err)
+		assert.WithinDuration(tt, time.Now(), startTime, 5*time.Second)
+	})
+
+	t.Run("does not overwrite existing annotation", func(tt *testing.T) {
+		existingTime := time.Now().Add(-10 * time.Minute).UTC().Format(time.RFC3339)
+		cluster := &v1beta1.TemporalCluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					annotationHopStartTime: existingTime,
+				},
+			},
+		}
+		r.ensureHopStartAnnotation(cluster)
+		assert.Equal(tt, existingTime, cluster.GetAnnotations()[annotationHopStartTime])
+	})
+}
+
+func TestIsHopTimedOut(t *testing.T) {
+	r := newReconciler()
+
+	tests := map[string]struct {
+		annotations map[string]string
+		expected    bool
+	}{
+		"no annotations - not timed out": {
+			annotations: nil,
+			expected:    false,
+		},
+		"recent start - not timed out": {
+			annotations: map[string]string{
+				annotationHopStartTime: time.Now().UTC().Format(time.RFC3339),
+			},
+			expected: false,
+		},
+		"old start - timed out": {
+			annotations: map[string]string{
+				annotationHopStartTime: time.Now().Add(-31 * time.Minute).UTC().Format(time.RFC3339),
+			},
+			expected: true,
+		},
+		"exactly at timeout - timed out": {
+			annotations: map[string]string{
+				annotationHopStartTime: time.Now().Add(-30 * time.Minute).UTC().Format(time.RFC3339),
+			},
+			expected: true,
+		},
+		"invalid time - not timed out": {
+			annotations: map[string]string{
+				annotationHopStartTime: "not-a-time",
+			},
+			expected: false,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(tt *testing.T) {
+			cluster := &v1beta1.TemporalCluster{}
+			if test.annotations != nil {
+				cluster.Annotations = test.annotations
+			}
+			assert.Equal(tt, test.expected, r.isHopTimedOut(cluster))
+		})
+	}
+}
+
+func TestClearHopStartAnnotation(t *testing.T) {
+	r := newReconciler()
+
+	t.Run("removes hop start annotation", func(tt *testing.T) {
+		cluster := &v1beta1.TemporalCluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					annotationHopStartTime: time.Now().UTC().Format(time.RFC3339),
+					"other":                "keep",
+				},
+			},
+		}
+		r.clearHopStartAnnotation(cluster)
+		assert.Equal(tt, "keep", cluster.GetAnnotations()["other"])
+		_, has := cluster.GetAnnotations()[annotationHopStartTime]
+		assert.False(tt, has)
+	})
+
+	t.Run("no-op when no annotation", func(_ *testing.T) {
+		cluster := &v1beta1.TemporalCluster{}
+		r.clearHopStartAnnotation(cluster) // should not panic
+	})
+}
+
+func TestSetAutoPause(t *testing.T) {
+	r := newReconciler()
+	r.Recorder = &fakeRecorder{}
+
+	cluster := &v1beta1.TemporalCluster{}
+	v := version.MustNewVersionFromString("1.26.3")
+	r.setAutoPause(cluster, v)
+
+	annotations := cluster.GetAnnotations()
+	assert.Equal(t, "true", annotations[annotationPauseUpgrade])
+	assert.Equal(t, "1.26.3", annotations["temporal.io/auto-paused-at-version"])
+}
+
+// fakeRecorder implements record.EventRecorder for tests.
+type fakeRecorder struct{}
+
+func (f *fakeRecorder) Event(_ runtime.Object, _, _, _ string)                       {}
+func (f *fakeRecorder) Eventf(_ runtime.Object, _, _, _ string, _ ...interface{})     {}
+func (f *fakeRecorder) AnnotatedEventf(_ runtime.Object, _ map[string]string, _, _, _ string, _ ...interface{}) {
 }
