@@ -577,6 +577,7 @@ func (r *TemporalClusterReconciler) handleSuccess(cluster *v1beta1.TemporalClust
 
 func (r *TemporalClusterReconciler) handleSuccessWithRequeue(cluster *v1beta1.TemporalCluster, requeueAfter time.Duration) (ctrl.Result, error) {
 	v1beta1.SetTemporalClusterReconcileSuccess(cluster, metav1.ConditionTrue, v1beta1.ReconcileSuccessReason, "")
+	v1beta1.SetTemporalClusterReconcileError(cluster, metav1.ConditionFalse, v1beta1.ReconcileSuccessReason, "")
 	return reconcile.Result{RequeueAfter: requeueAfter}, nil
 }
 
