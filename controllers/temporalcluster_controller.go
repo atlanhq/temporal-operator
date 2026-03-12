@@ -424,11 +424,24 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return reconcile.Result{RequeueAfter: stabilityDuration}, nil
 	}
 
-	// Final version reached or single-hop upgrade. Clean up any leftover hop annotations.
-	logger.Info("DEBUG MULTIHOP: Final version or single-hop, cleaning up all hop annotations",
+	// Final version reached or single-hop upgrade.
+	// Guard: wait for all services to be ready at the target version before declaring success.
+	// Without this, schema may have migrated to the target version while pods are still
+	// running the previous version — especially dangerous during the last hop of a multi-hop
+	// upgrade where multiHopInProgress is false.
+	clusterReady := status.IsClusterReady(cluster)
+	logger.Info("DEBUG MULTIHOP: Final version or single-hop, checking readiness before success",
 		"effectiveVersion", effectiveVersion.String(),
 		"targetVersion", targetVersion.String(),
-		"status.version", cluster.Status.Version)
+		"status.version", cluster.Status.Version,
+		"isClusterReady", clusterReady)
+	if !clusterReady {
+		v1beta1.SetTemporalClusterReconcileSuccess(cluster, metav1.ConditionTrue,
+			v1beta1.ProgressingReason,
+			fmt.Sprintf("Waiting for cluster to be ready at %s", effectiveVersion.String()))
+		return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
 	r.clearHopAnnotations(cluster)
 	r.clearHopStartAnnotation(cluster)
 	r.clearCurrentHopTarget(cluster)
