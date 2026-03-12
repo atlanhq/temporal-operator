@@ -78,6 +78,11 @@ const (
 	// this annotation is present, allowing operators to inspect/fix issues mid-upgrade.
 	annotationPauseUpgrade = "temporal.io/pause-upgrade"
 
+	// annotationCurrentHopTarget tracks the version being targeted by the in-flight hop.
+	// This prevents the operator from computing a new effective version on each reconcile,
+	// which would skip stability waits when a hop completes across reconcile cycles.
+	annotationCurrentHopTarget = "temporal.io/current-hop-target"
+
 	// defaultHopTimeout is the maximum time a single hop can take before auto-pausing.
 	// Covers schema migration + deployment rollout + readiness checks.
 	defaultHopTimeout = 30 * time.Minute
@@ -153,19 +158,37 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return reconcile.Result{RequeueAfter: remaining}, nil
 	}
 
-	// Multi-hop version upgrade: compute the effective version for this reconcile cycle.
-	// If the target is multiple minor versions ahead, we step through one minor at a time.
 	targetVersion := cluster.Spec.Version
-	effectiveVersion, err := r.computeEffectiveVersion(cluster)
-	if err != nil {
-		logger.Error(err, "Can't compute effective upgrade version")
-		return r.handleErrorWithRequeue(cluster, v1beta1.ReconcileErrorReason, err, 5*time.Second)
-	}
-	if effectiveVersion == nil {
-		effectiveVersion = targetVersion
+
+	// Determine effective version for this reconcile cycle.
+	// If a hop is already in flight (recorded in annotation from a previous reconcile),
+	// continue with that target instead of computing a new one. This prevents the
+	// operator from skipping stability waits: without this, when a hop completes
+	// across reconcile cycles, computeEffectiveVersion would return the NEXT hop
+	// before the stability annotation for the completed hop is ever set.
+	var effectiveVersion *version.Version
+	multiHopInProgress := false
+
+	if hopTarget := r.getCurrentHopTarget(cluster); hopTarget != "" {
+		hopTargetVersion, parseErr := version.NewVersionFromString(hopTarget)
+		if parseErr == nil && targetVersion != nil && hopTarget != targetVersion.String() {
+			effectiveVersion = hopTargetVersion
+			multiHopInProgress = true
+		}
 	}
 
-	multiHopInProgress := targetVersion != nil && effectiveVersion.String() != targetVersion.String()
+	if !multiHopInProgress {
+		var computeErr error
+		effectiveVersion, computeErr = r.computeEffectiveVersion(cluster)
+		if computeErr != nil {
+			logger.Error(computeErr, "Can't compute effective upgrade version")
+			return r.handleErrorWithRequeue(cluster, v1beta1.ReconcileErrorReason, computeErr, 5*time.Second)
+		}
+		if effectiveVersion == nil {
+			effectiveVersion = targetVersion
+		}
+		multiHopInProgress = targetVersion != nil && effectiveVersion.String() != targetVersion.String()
+	}
 
 	// Pause gate: if the pause-upgrade annotation is set, do not advance the
 	// multi-hop upgrade. The cluster continues to reconcile its current state
@@ -180,6 +203,7 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		// at the current running version so the cluster remains managed.
 		multiHopInProgress = false
 		effectiveVersion = r.getCurrentVersion(cluster)
+		r.clearCurrentHopTarget(cluster)
 	}
 
 	if multiHopInProgress {
@@ -187,6 +211,10 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			"current", r.getCurrentVersion(cluster).String(),
 			"effectiveHop", effectiveVersion.String(),
 			"target", targetVersion.String())
+
+		// Record the hop target so subsequent reconciles continue with this hop
+		// instead of computing a new effective version.
+		r.setCurrentHopTarget(cluster, effectiveVersion)
 
 		// Track hop start time for timeout detection.
 		r.ensureHopStartAnnotation(cluster)
@@ -208,11 +236,6 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		// IMPORTANT: Temporarily set spec.version to the intermediate hop so all builders
 		// (schema migration, deployments) use the correct intermediate version.
 		// Restored before the patch helper runs (defers execute LIFO).
-		//
-		// CONTRACT: During reconciliation, do NOT:
-		// - Read cluster.Spec.Version in a goroutine (it will see the intermediate version)
-		// - Add defers between this block and the patch helper defer above
-		// - Cache cluster.Spec.Version before this point and use it after
 		cluster.Spec.Version = effectiveVersion
 		defer func() {
 			cluster.Spec.Version = targetVersion
@@ -264,10 +287,11 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 		// Cluster is ready at intermediate version. Record the hop completion time
 		// in annotations so it persists across watch-triggered reconciles.
-		// Clear the hop start time since this hop completed successfully.
+		// Clear the hop start and target annotations since this hop completed successfully.
 		stabilityDuration := r.getStabilityDuration(cluster)
 		r.setHopCompletionAnnotation(cluster, effectiveVersion)
 		r.clearHopStartAnnotation(cluster)
+		r.clearCurrentHopTarget(cluster)
 		logger.Info("Intermediate hop completed and cluster ready, starting stability wait",
 			"completedVersion", effectiveVersion.String(),
 			"targetVersion", targetVersion.String(),
@@ -282,6 +306,7 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// Final version reached or single-hop upgrade. Clean up any leftover hop annotations.
 	r.clearHopAnnotations(cluster)
 	r.clearHopStartAnnotation(cluster)
+	r.clearCurrentHopTarget(cluster)
 	return r.handleSuccess(cluster)
 }
 
@@ -599,6 +624,39 @@ func (r *TemporalClusterReconciler) setAutoPause(cluster *v1beta1.TemporalCluste
 	cluster.SetAnnotations(annotations)
 	r.Recorder.Event(cluster, corev1.EventTypeWarning, "HopTimeout",
 		fmt.Sprintf("Hop to %s exceeded %s timeout, upgrade auto-paused", stuckVersion.String(), defaultHopTimeout))
+}
+
+// getCurrentHopTarget returns the in-flight hop target version from the annotation, or empty string if none.
+func (r *TemporalClusterReconciler) getCurrentHopTarget(cluster *v1beta1.TemporalCluster) string {
+	annotations := cluster.GetAnnotations()
+	if annotations == nil {
+		return ""
+	}
+	return annotations[annotationCurrentHopTarget]
+}
+
+// setCurrentHopTarget records the hop target version in an annotation so subsequent
+// reconciles continue with the same hop instead of computing a new effective version.
+func (r *TemporalClusterReconciler) setCurrentHopTarget(cluster *v1beta1.TemporalCluster, v *version.Version) {
+	annotations := cluster.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	annotations[annotationCurrentHopTarget] = v.String()
+	cluster.SetAnnotations(annotations)
+}
+
+// clearCurrentHopTarget removes the in-flight hop target annotation.
+func (r *TemporalClusterReconciler) clearCurrentHopTarget(cluster *v1beta1.TemporalCluster) {
+	annotations := cluster.GetAnnotations()
+	if annotations == nil {
+		return
+	}
+	if _, ok := annotations[annotationCurrentHopTarget]; !ok {
+		return
+	}
+	delete(annotations, annotationCurrentHopTarget)
+	cluster.SetAnnotations(annotations)
 }
 
 // SetupWithManager sets up the controller with the Manager.
