@@ -160,17 +160,17 @@ func TestGetStabilityDuration(t *testing.T) {
 		cluster  *v1beta1.TemporalCluster
 		expected time.Duration
 	}{
-		"no version upgrade config": {
+		"no version upgrade config defaults to 5m": {
 			cluster:  &v1beta1.TemporalCluster{},
-			expected: 0,
+			expected: 5 * time.Minute,
 		},
-		"version upgrade without stability duration": {
+		"version upgrade without stability duration defaults to 5m": {
 			cluster: &v1beta1.TemporalCluster{
 				Spec: v1beta1.TemporalClusterSpec{
 					VersionUpgrade: &v1beta1.VersionUpgradeSpec{},
 				},
 			},
-			expected: 0,
+			expected: 5 * time.Minute,
 		},
 		"version upgrade with stability duration": {
 			cluster: &v1beta1.TemporalCluster{
@@ -287,13 +287,14 @@ func TestRemainingStabilityWait(t *testing.T) {
 			annotations:   map[string]string{"other": "value"},
 			expectWaiting: false,
 		},
-		"no stability duration configured - not waiting": {
+		"no stability duration configured - uses 5m default, still waiting": {
 			annotations: map[string]string{
 				annotationLastHopTime:    time.Now().UTC().Format(time.RFC3339),
 				annotationLastHopVersion: "1.26.3",
 			},
 			stabilityDuration: nil,
-			expectWaiting:     false,
+			expectWaiting:     true,
+			expectRemaining:   5 * time.Minute,
 		},
 		"zero stability duration - not waiting": {
 			annotations: map[string]string{

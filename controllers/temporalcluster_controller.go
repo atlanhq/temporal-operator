@@ -427,7 +427,9 @@ func (r *TemporalClusterReconciler) getStabilityDuration(cluster *v1beta1.Tempor
 		cluster.Spec.VersionUpgrade.StabilityDuration != nil {
 		return cluster.Spec.VersionUpgrade.StabilityDuration.Duration
 	}
-	return 0
+	// Default to 5 minutes even if not configured, as a safety net to ensure
+	// intermediate versions are stable before proceeding to the next hop.
+	return 5 * time.Minute
 }
 
 // remainingStabilityWait checks if the cluster is in a stability wait period
