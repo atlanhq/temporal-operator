@@ -221,6 +221,58 @@ func (w *TemporalClusterWebhook) validateCluster(cluster *v1beta1.TemporalCluste
 		}
 	}
 
+	// Validate user-specified intermediate versions for multi-hop upgrades.
+	if cluster.Spec.VersionUpgrade != nil {
+		var prevMinor uint64
+		for i, vs := range cluster.Spec.VersionUpgrade.IntermediateVersions {
+			v, err := version.NewVersionFromString(vs)
+			if err != nil {
+				errs = append(errs,
+					field.Invalid(
+						field.NewPath("spec", "versionUpgrade", "intermediateVersions", fmt.Sprintf("[%d]", i)),
+						vs,
+						fmt.Sprintf("invalid version: %s", err),
+					),
+				)
+				continue
+			}
+
+			// Ensure intermediate version is not a known broken release.
+			for _, broken := range version.ForbiddenBrokenReleases {
+				if v.Equal(broken.Version) {
+					errs = append(errs,
+						field.Forbidden(
+							field.NewPath("spec", "versionUpgrade", "intermediateVersions", fmt.Sprintf("[%d]", i)),
+							fmt.Sprintf("version %s is marked as broken by the operator", vs),
+						),
+					)
+				}
+			}
+
+			// Ensure intermediate version does not exceed the target version.
+			if cluster.Spec.Version != nil && !cluster.Spec.Version.GreaterOrEqual(v) {
+				errs = append(errs,
+					field.Forbidden(
+						field.NewPath("spec", "versionUpgrade", "intermediateVersions", fmt.Sprintf("[%d]", i)),
+						fmt.Sprintf("intermediate version %s exceeds target version %s", vs, cluster.Spec.Version.String()),
+					),
+				)
+			}
+
+			// Ensure intermediate versions are in ascending order and don't skip minors.
+			if i > 0 && prevMinor > 0 && v.Minor() > prevMinor+1 {
+				errs = append(errs,
+					field.Forbidden(
+						field.NewPath("spec", "versionUpgrade", "intermediateVersions", fmt.Sprintf("[%d]", i)),
+						fmt.Sprintf("intermediate versions skip minor version: gap from 1.%d.x to %s, add the missing intermediate version for 1.%d.x", prevMinor, vs, prevMinor+1),
+					),
+				)
+			}
+
+			prevMinor = v.Minor()
+		}
+	}
+
 	// Check new features introduced in cluster version >= 1.20 are not enabled for older version.
 	if !cluster.Spec.Version.GreaterOrEqual(version.V1_20_0) {
 		// Ensure Internal Frontend is only enabled for cluster version >= 1.20
@@ -388,19 +440,13 @@ func (w *TemporalClusterWebhook) ValidateUpdate(_ context.Context, oldObj, newOb
 
 	warns, errs := w.validateCluster(newCluster)
 
-	// Ensure user is doing a sequential version upgrade.
-	// See: https://docs.temporal.io/cluster-deployment-guide#upgrade-server
-	constraint, err := oldCluster.Spec.Version.UpgradeConstraint()
-	if err != nil {
-		return nil, fmt.Errorf("can't compute version upgrade constraint: %w", err)
-	}
-
-	allowed := constraint.Check(newCluster.Spec.Version.Version)
-	if !allowed {
+	// Prevent version downgrades. Multi-minor-version upgrades are allowed;
+	// the controller handles them as sequential hop-by-hop upgrades internally.
+	if newCluster.Spec.Version.LessThan(oldCluster.Spec.Version) {
 		errs = append(errs,
 			field.Forbidden(
 				field.NewPath("spec", "version"),
-				"Unauthorized version upgrade. Only sequential version upgrades are allowed (from v1.n.x to v1.n+1.x)",
+				"Version downgrade is not allowed",
 			),
 		)
 	}

@@ -35,6 +35,10 @@ const (
 	TemporalNamespaceCreatedReason string = "TemporalNamespaceCreated"
 	// TemporalScheduleCreatedReason signals a successful schedule creation.
 	TemporalScheduleCreatedReason string = "TemporalScheduleCreated"
+	// MultiHopUpgradeInProgressReason signals the cluster is mid-way through a multi-hop version upgrade.
+	MultiHopUpgradeInProgressReason string = "MultiHopUpgradeInProgress"
+	// MultiHopUpgradeHopStuckReason signals a hop has exceeded its timeout without completing.
+	MultiHopUpgradeHopStuckReason string = "MultiHopUpgradeHopStuck"
 )
 
 // SetTemporalClusterReconcileSuccess sets the ReconcileSuccessCondition status for a temporal cluster.

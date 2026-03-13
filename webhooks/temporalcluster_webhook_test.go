@@ -401,16 +401,17 @@ func TestValidateUpdate(t *testing.T) {
 				Spec:   v1beta1.TemporalClusterSpec{Version: version.MustNewVersionFromString("1.18.4")},
 				Status: v1beta1.TemporalClusterStatus{},
 			},
-			expectedErr: "TemporalCluster.temporal.io \"fake\" is invalid: spec.version: Forbidden: Unauthorized version upgrade. Only sequential version upgrades are allowed (from v1.n.x to v1.n+1.x)",
+			expectedErr: "TemporalCluster.temporal.io \"fake\" is invalid: spec.version: Forbidden: Version downgrade is not allowed",
 		},
-		"not a sequential version update": {
+		"multi-minor-hop allowed": {
 			oldlObject: &v1beta1.TemporalCluster{
 				TypeMeta: v1beta1.TemporalClusterTypeMeta,
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "fake",
 				},
 				Spec: v1beta1.TemporalClusterSpec{
-					Version: version.MustNewVersionFromString("1.17.0"),
+					Version:          version.MustNewVersionFromString("1.17.0"),
+					NumHistoryShards: int32(512),
 				},
 			},
 			newObject: &v1beta1.TemporalCluster{
@@ -418,10 +419,11 @@ func TestValidateUpdate(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "fake",
 				},
-				Spec:   v1beta1.TemporalClusterSpec{Version: version.MustNewVersionFromString("1.19.4")},
-				Status: v1beta1.TemporalClusterStatus{},
+				Spec: v1beta1.TemporalClusterSpec{
+					Version:          version.MustNewVersionFromString("1.19.4"),
+					NumHistoryShards: int32(512),
+				},
 			},
-			expectedErr: "TemporalCluster.temporal.io \"fake\" is invalid: spec.version: Forbidden: Unauthorized version upgrade. Only sequential version upgrades are allowed (from v1.n.x to v1.n+1.x)",
 		},
 		"immutable numHistoryShards": {
 			oldlObject: &v1beta1.TemporalCluster{
@@ -455,6 +457,88 @@ func TestValidateUpdate(t *testing.T) {
 			if test.expectedErr != "" {
 				assert.Error(tt, err)
 				assert.Equal(tt, test.expectedErr, err.Error())
+			} else {
+				assert.NoError(tt, err)
+			}
+		})
+	}
+}
+
+func TestValidateIntermediateVersions(t *testing.T) {
+	tests := map[string]struct {
+		object      runtime.Object
+		expectedErr string
+	}{
+		"valid intermediate versions": {
+			object: &v1beta1.TemporalCluster{
+				TypeMeta: v1beta1.TemporalClusterTypeMeta,
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "fake",
+				},
+				Spec: v1beta1.TemporalClusterSpec{
+					Version: version.MustNewVersionFromString("1.28.2"),
+					VersionUpgrade: &v1beta1.VersionUpgradeSpec{
+						IntermediateVersions: []string{"1.26.3", "1.27.4"},
+					},
+				},
+			},
+		},
+		"intermediate versions skip a minor": {
+			object: &v1beta1.TemporalCluster{
+				TypeMeta: v1beta1.TemporalClusterTypeMeta,
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "fake",
+				},
+				Spec: v1beta1.TemporalClusterSpec{
+					Version: version.MustNewVersionFromString("1.28.2"),
+					VersionUpgrade: &v1beta1.VersionUpgradeSpec{
+						IntermediateVersions: []string{"1.26.3", "1.28.1"},
+					},
+				},
+			},
+			expectedErr: "intermediate versions skip minor version",
+		},
+		"intermediate version exceeds target": {
+			object: &v1beta1.TemporalCluster{
+				TypeMeta: v1beta1.TemporalClusterTypeMeta,
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "fake",
+				},
+				Spec: v1beta1.TemporalClusterSpec{
+					Version: version.MustNewVersionFromString("1.27.4"),
+					VersionUpgrade: &v1beta1.VersionUpgradeSpec{
+						IntermediateVersions: []string{"1.26.3", "1.28.2"},
+					},
+				},
+			},
+			expectedErr: "exceeds target version",
+		},
+		"broken intermediate version": {
+			object: &v1beta1.TemporalCluster{
+				TypeMeta: v1beta1.TemporalClusterTypeMeta,
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "fake",
+				},
+				Spec: v1beta1.TemporalClusterSpec{
+					Version: version.MustNewVersionFromString("1.28.2"),
+					VersionUpgrade: &v1beta1.VersionUpgradeSpec{
+						IntermediateVersions: []string{"1.27.0"},
+					},
+				},
+			},
+			expectedErr: "marked as broken",
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(tt *testing.T) {
+			wh := &webhooks.TemporalClusterWebhook{
+				AvailableAPIs: &discovery.AvailableAPIs{},
+			}
+			_, err := wh.ValidateCreate(context.Background(), test.object)
+			if test.expectedErr != "" {
+				assert.Error(tt, err)
+				assert.Contains(tt, err.Error(), test.expectedErr)
 			} else {
 				assert.NoError(tt, err)
 			}

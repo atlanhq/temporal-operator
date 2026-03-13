@@ -315,5 +315,7 @@ func (r *TemporalClusterReconciler) reconcilePersistence(ctx context.Context, cl
 		return persistence.NewSchemaJobBuilder(cluster, scheme, name, command)
 	}
 
-	return r.Jobs.Reconcile(ctx, cluster, factory, jobs)
+	requeueAfter, err := r.Jobs.Reconcile(ctx, cluster, factory, jobs)
+
+	return requeueAfter, err
 }
