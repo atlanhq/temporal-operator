@@ -136,7 +136,6 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return reconcile.Result{}, nil
 	}
 
-
 	patchHelper, err := patch.NewHelper(cluster, r.Client)
 	if err != nil {
 		return reconcile.Result{}, err
@@ -262,7 +261,6 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		logger.Error(err, "Can't reconcile resources")
 		return r.handleErrorWithRequeue(cluster, v1beta1.ResourcesReconciliationFailedReason, err, 2*time.Second)
 	}
-
 
 	if multiHopInProgress {
 		// Guard: do not advance to the next hop until the cluster is fully ready
