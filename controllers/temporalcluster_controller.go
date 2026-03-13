@@ -628,43 +628,6 @@ func (r *TemporalClusterReconciler) getCurrentVersion(cluster *v1beta1.TemporalC
 	return cluster.Spec.Version
 }
 
-// getCurrentVersionDebug is like getCurrentVersion but also logs which path was taken.
-func (r *TemporalClusterReconciler) getCurrentVersionDebug(ctx context.Context, cluster *v1beta1.TemporalCluster) *version.Version {
-	logger := log.FromContext(ctx)
-	schemaVer := ""
-	if cluster.Status.Persistence != nil && cluster.Status.Persistence.DefaultStore != nil && cluster.Status.Persistence.DefaultStore.SchemaVersion != nil {
-		schemaVer = cluster.Status.Persistence.DefaultStore.SchemaVersion.String()
-	}
-
-	if cluster.Status.Version != "" {
-		v, err := version.NewVersionFromString(cluster.Status.Version)
-		if err == nil {
-			logger.Info("DEBUG MULTIHOP: getCurrentVersion chose STATUS.VERSION",
-				"status.version", cluster.Status.Version,
-				"schemaVersion", schemaVer,
-				"spec.version", cluster.Spec.Version.String())
-			return v
-		}
-		logger.Info("DEBUG MULTIHOP: getCurrentVersion status.version unparseable",
-			"status.version", cluster.Status.Version,
-			"err", err)
-	}
-
-	if cluster.Status.Version == "" &&
-		cluster.Status.Persistence != nil &&
-		cluster.Status.Persistence.DefaultStore != nil &&
-		cluster.Status.Persistence.DefaultStore.SchemaVersion != nil {
-		logger.Info("DEBUG MULTIHOP: getCurrentVersion chose SCHEMA VERSION (status.version empty)",
-			"schemaVersion", schemaVer,
-			"spec.version", cluster.Spec.Version.String())
-		return cluster.Status.Persistence.DefaultStore.SchemaVersion
-	}
-
-	logger.Info("DEBUG MULTIHOP: getCurrentVersion chose SPEC.VERSION (no status, no schema)",
-		"spec.version", cluster.Spec.Version.String())
-	return cluster.Spec.Version
-}
-
 // computeEffectiveVersion returns the version to target for this reconcile cycle.
 // For single-hop upgrades, this is just spec.version.
 // For multi-hop upgrades, this is the next intermediate version.
@@ -723,52 +686,6 @@ func (r *TemporalClusterReconciler) remainingStabilityWait(cluster *v1beta1.Temp
 	}
 
 	return stabilityDuration - elapsed, true
-}
-
-// remainingStabilityWaitDebug is like remainingStabilityWait but logs every branch.
-func (r *TemporalClusterReconciler) remainingStabilityWaitDebug(ctx context.Context, cluster *v1beta1.TemporalCluster) (time.Duration, bool) {
-	logger := log.FromContext(ctx)
-	annotations := cluster.GetAnnotations()
-	if annotations == nil {
-		logger.Info("DEBUG MULTIHOP: remainingStabilityWait: no annotations at all")
-		return 0, false
-	}
-
-	hopTimeStr, ok := annotations[annotationLastHopTime]
-	if !ok {
-		logger.Info("DEBUG MULTIHOP: remainingStabilityWait: no lastHopTime annotation")
-		return 0, false
-	}
-
-	hopTime, err := time.Parse(time.RFC3339, hopTimeStr)
-	if err != nil {
-		logger.Info("DEBUG MULTIHOP: remainingStabilityWait: lastHopTime unparseable",
-			"value", hopTimeStr, "err", err)
-		return 0, false
-	}
-
-	stabilityDuration := r.getStabilityDuration(cluster)
-	if stabilityDuration == 0 {
-		logger.Info("DEBUG MULTIHOP: remainingStabilityWait: stabilityDuration is 0, skipping wait")
-		return 0, false
-	}
-
-	elapsed := time.Since(hopTime)
-	if elapsed >= stabilityDuration {
-		logger.Info("DEBUG MULTIHOP: remainingStabilityWait: stability period EXPIRED",
-			"hopTime", hopTimeStr,
-			"elapsed", elapsed,
-			"stabilityDuration", stabilityDuration)
-		return 0, false
-	}
-
-	remaining := stabilityDuration - elapsed
-	logger.Info("DEBUG MULTIHOP: remainingStabilityWait: STILL WAITING",
-		"hopTime", hopTimeStr,
-		"elapsed", elapsed,
-		"remaining", remaining,
-		"stabilityDuration", stabilityDuration)
-	return remaining, true
 }
 
 // setHopCompletionAnnotation records the completion of an intermediate hop
