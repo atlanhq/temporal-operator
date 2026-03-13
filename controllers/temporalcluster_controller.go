@@ -86,6 +86,9 @@ const (
 	// defaultHopTimeout is the maximum time a single hop can take before auto-pausing.
 	// Covers schema migration + deployment rollout + readiness checks.
 	defaultHopTimeout = 30 * time.Minute
+
+	// annotationTrue is the string value used for boolean-like annotations.
+	annotationTrue = "true"
 )
 
 // TemporalClusterReconciler reconciles a Cluster object.
@@ -133,34 +136,6 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return reconcile.Result{}, nil
 	}
 
-	// DEBUG: Dump full multi-hop state at reconcile entry
-	{
-		ann := cluster.GetAnnotations()
-		schemaVer := ""
-		if cluster.Status.Persistence != nil && cluster.Status.Persistence.DefaultStore != nil && cluster.Status.Persistence.DefaultStore.SchemaVersion != nil {
-			schemaVer = cluster.Status.Persistence.DefaultStore.SchemaVersion.String()
-		}
-		svcVersions := make(map[string]string)
-		svcReady := make(map[string]bool)
-		for _, svc := range cluster.Status.Services {
-			svcVersions[svc.Name] = svc.Version
-			svcReady[svc.Name] = svc.Ready
-		}
-		logger.Info("DEBUG MULTIHOP: Reconcile entry state",
-			"spec.version", cluster.Spec.Version.String(),
-			"status.version", cluster.Status.Version,
-			"schemaVersion", schemaVer,
-			"serviceVersions", fmt.Sprintf("%v", svcVersions),
-			"serviceReady", fmt.Sprintf("%v", svcReady),
-			"ann.lastHopTime", ann[annotationLastHopTime],
-			"ann.lastHopVersion", ann[annotationLastHopVersion],
-			"ann.hopStartTime", ann[annotationHopStartTime],
-			"ann.currentHopTarget", ann[annotationCurrentHopTarget],
-			"ann.pauseUpgrade", ann[annotationPauseUpgrade],
-			"generation", cluster.Generation,
-			"resourceVersion", cluster.ResourceVersion,
-		)
-	}
 
 	patchHelper, err := patch.NewHelper(cluster, r.Client)
 	if err != nil {
@@ -168,26 +143,11 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	defer func() {
-		// DEBUG: Log annotation state just before patching
-		{
-			ann := cluster.GetAnnotations()
-			logger.Info("DEBUG MULTIHOP: Pre-patch annotation state",
-				"spec.version", cluster.Spec.Version.String(),
-				"status.version", cluster.Status.Version,
-				"ann.lastHopTime", ann[annotationLastHopTime],
-				"ann.lastHopVersion", ann[annotationLastHopVersion],
-				"ann.hopStartTime", ann[annotationHopStartTime],
-				"ann.currentHopTarget", ann[annotationCurrentHopTarget],
-				"ann.pauseUpgrade", ann[annotationPauseUpgrade],
-			)
-		}
 		// Always attempt to Patch the Cluster object and status after each reconciliation.
 		err := patchHelper.Patch(ctx, cluster)
 		if err != nil {
-			logger.Error(err, "DEBUG MULTIHOP: Patch failed")
+			logger.Error(err, "Can't patch cluster")
 			reterr = kerrors.NewAggregate([]error{reterr, err})
-		} else {
-			logger.Info("DEBUG MULTIHOP: Patch succeeded", "resourceVersion", cluster.ResourceVersion)
 		}
 	}()
 
@@ -197,17 +157,7 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// watch-triggered reconciles (deployment changes, job completions) that
 	// would otherwise bypass the RequeueAfter timer.
 	if remaining, waiting := r.remainingStabilityWait(cluster); waiting {
-		logger.Info("DEBUG MULTIHOP: Stability wait gate ACTIVE - returning early",
-			"lastHopVersion", cluster.GetAnnotations()[annotationLastHopVersion],
-			"lastHopTime", cluster.GetAnnotations()[annotationLastHopTime],
-			"remaining", remaining,
-			"stabilityDuration", r.getStabilityDuration(cluster))
 		return reconcile.Result{RequeueAfter: remaining}, nil
-	} else {
-		logger.Info("DEBUG MULTIHOP: Stability wait gate PASSED (not waiting)",
-			"hasLastHopTime", cluster.GetAnnotations()[annotationLastHopTime] != "",
-			"lastHopVersion", cluster.GetAnnotations()[annotationLastHopVersion],
-			"stabilityDuration", r.getStabilityDuration(cluster))
 	}
 
 	targetVersion := cluster.Spec.Version
@@ -222,29 +172,14 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	multiHopInProgress := false
 
 	if hopTarget := r.getCurrentHopTarget(cluster); hopTarget != "" {
-		logger.Info("DEBUG MULTIHOP: Found in-flight hop target annotation",
-			"hopTarget", hopTarget,
-			"targetVersion", targetVersion.String())
 		hopTargetVersion, parseErr := version.NewVersionFromString(hopTarget)
 		if parseErr == nil && targetVersion != nil && hopTarget != targetVersion.String() {
 			effectiveVersion = hopTargetVersion
 			multiHopInProgress = true
-			logger.Info("DEBUG MULTIHOP: Using in-flight hop target as effective version",
-				"effectiveVersion", effectiveVersion.String())
-		} else {
-			logger.Info("DEBUG MULTIHOP: In-flight hop target NOT used",
-				"parseErr", parseErr,
-				"hopTargetEqualsTarget", hopTarget == targetVersion.String())
 		}
-	} else {
-		logger.Info("DEBUG MULTIHOP: No in-flight hop target annotation found")
 	}
 
 	if !multiHopInProgress {
-		currentVer := r.getCurrentVersion(cluster)
-		logger.Info("DEBUG MULTIHOP: Computing effective version (no in-flight hop)",
-			"currentVersion", currentVer.String(),
-			"targetVersion", targetVersion.String())
 		var computeErr error
 		effectiveVersion, computeErr = r.computeEffectiveVersion(cluster)
 		if computeErr != nil {
@@ -253,12 +188,8 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		if effectiveVersion == nil {
 			effectiveVersion = targetVersion
-			logger.Info("DEBUG MULTIHOP: computeEffectiveVersion returned nil, using target")
 		}
 		multiHopInProgress = targetVersion != nil && effectiveVersion.String() != targetVersion.String()
-		logger.Info("DEBUG MULTIHOP: Computed effective version",
-			"effectiveVersion", effectiveVersion.String(),
-			"multiHopInProgress", multiHopInProgress)
 	}
 
 	// Pause gate: if the pause-upgrade annotation is set, do not advance the
@@ -266,10 +197,6 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// (persistence, services, config) so pods are managed and can recover from
 	// crashes — only hop advancement is blocked.
 	if multiHopInProgress && r.isUpgradePaused(cluster) {
-		logger.Info("DEBUG MULTIHOP: Upgrade PAUSED via annotation",
-			"annotation", annotationPauseUpgrade,
-			"currentVersion", r.getCurrentVersion(cluster).String(),
-			"targetVersion", targetVersion.String())
 		// Do NOT return early — fall through to reconcile persistence and resources
 		// at the current running version so the cluster remains managed.
 		multiHopInProgress = false
@@ -278,17 +205,9 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	if multiHopInProgress {
-		logger.Info("DEBUG MULTIHOP: Multi-hop active, preparing hop",
-			"current", r.getCurrentVersion(cluster).String(),
-			"effectiveHop", effectiveVersion.String(),
-			"target", targetVersion.String(),
-			"currentAnnotations", fmt.Sprintf("%v", cluster.GetAnnotations()))
-
 		// Record the hop target so subsequent reconciles continue with this hop
 		// instead of computing a new effective version.
 		r.setCurrentHopTarget(cluster, effectiveVersion)
-		logger.Info("DEBUG MULTIHOP: Set current hop target annotation",
-			"hopTarget", effectiveVersion.String())
 
 		// Track hop start time for timeout detection.
 		r.ensureHopStartAnnotation(cluster)
@@ -310,23 +229,14 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		// IMPORTANT: Temporarily set spec.version to the intermediate hop so all builders
 		// (schema migration, deployments) use the correct intermediate version.
 		// Restored before the patch helper runs (defers execute LIFO).
-		logger.Info("DEBUG MULTIHOP: Temporarily setting spec.version to intermediate hop",
-			"from", cluster.Spec.Version.String(),
-			"to", effectiveVersion.String())
 		cluster.Spec.Version = effectiveVersion
 		defer func() {
-			logger.Info("DEBUG MULTIHOP: Restoring spec.version from intermediate to target",
-				"from", effectiveVersion.String(),
-				"to", targetVersion.String())
 			cluster.Spec.Version = targetVersion
 		}()
 	}
 
 	// Clear hop completion annotations if we're past the stability wait (they were checked above).
 	// This keeps annotations clean once we've moved on to the next hop.
-	logger.Info("DEBUG MULTIHOP: About to clearHopAnnotations (post-stability-gate cleanup)",
-		"hasLastHopTime", cluster.GetAnnotations()[annotationLastHopTime] != "",
-		"lastHopVersion", cluster.GetAnnotations()[annotationLastHopVersion])
 	r.clearHopAnnotations(cluster)
 
 	// Check the ready condition
@@ -335,9 +245,6 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		v1beta1.SetTemporalClusterReady(cluster, metav1.ConditionUnknown, v1beta1.ProgressingReason, "")
 	}
 
-	logger.Info("DEBUG MULTIHOP: About to reconcile persistence",
-		"spec.version", cluster.Spec.Version.String(),
-		"multiHopInProgress", multiHopInProgress)
 	if requeueAfter, err := r.reconcilePersistence(ctx, cluster); err != nil || requeueAfter > 0 {
 		if err != nil {
 			logger.Error(err, "Can't reconcile persistence")
@@ -351,51 +258,18 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}
 
-	logger.Info("DEBUG MULTIHOP: About to reconcile resources",
-		"spec.version", cluster.Spec.Version.String(),
-		"multiHopInProgress", multiHopInProgress)
 	if err := r.reconcileResources(ctx, cluster); err != nil {
 		logger.Error(err, "Can't reconcile resources")
 		return r.handleErrorWithRequeue(cluster, v1beta1.ResourcesReconciliationFailedReason, err, 2*time.Second)
 	}
 
-	// DEBUG: Log service status after reconcileResources
-	{
-		svcVersions := make(map[string]string)
-		svcReady := make(map[string]bool)
-		for _, svc := range cluster.Status.Services {
-			svcVersions[svc.Name] = svc.Version
-			svcReady[svc.Name] = svc.Ready
-		}
-		schemaVer := ""
-		if cluster.Status.Persistence != nil && cluster.Status.Persistence.DefaultStore != nil && cluster.Status.Persistence.DefaultStore.SchemaVersion != nil {
-			schemaVer = cluster.Status.Persistence.DefaultStore.SchemaVersion.String()
-		}
-		logger.Info("DEBUG MULTIHOP: Post-reconcileResources state",
-			"status.version", cluster.Status.Version,
-			"spec.version", cluster.Spec.Version.String(),
-			"schemaVersion", schemaVer,
-			"serviceVersions", fmt.Sprintf("%v", svcVersions),
-			"serviceReady", fmt.Sprintf("%v", svcReady),
-			"isClusterReady", status.IsClusterReady(cluster),
-			"observedVersionMatches", status.ObservedVersionMatchesDesiredVersion(cluster),
-			"multiHopInProgress", multiHopInProgress)
-	}
 
 	if multiHopInProgress {
 		// Guard: do not advance to the next hop until the cluster is fully ready
 		// at the current intermediate version. This prevents version gaps where
 		// schema is ahead of running pods, which can cause crashes or data corruption.
 		clusterReady := status.IsClusterReady(cluster)
-		logger.Info("DEBUG MULTIHOP: Checking cluster readiness for hop completion",
-			"isClusterReady", clusterReady,
-			"effectiveVersion", effectiveVersion.String(),
-			"spec.version", cluster.Spec.Version.String(),
-			"status.version", cluster.Status.Version)
 		if !clusterReady {
-			logger.Info("DEBUG MULTIHOP: Cluster NOT ready, requeuing hop",
-				"effectiveVersion", effectiveVersion.String(),
-				"targetVersion", targetVersion.String())
 			v1beta1.SetTemporalClusterReconcileSuccess(cluster, metav1.ConditionTrue,
 				v1beta1.MultiHopUpgradeInProgressReason,
 				fmt.Sprintf("Upgrading to %s (hop %s, waiting for services to be ready)",
@@ -407,16 +281,9 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		// in annotations so it persists across watch-triggered reconciles.
 		// Clear the hop start and target annotations since this hop completed successfully.
 		stabilityDuration := r.getStabilityDuration(cluster)
-		logger.Info("DEBUG MULTIHOP: HOP COMPLETED! Setting hop completion annotation",
-			"completedVersion", effectiveVersion.String(),
-			"targetVersion", targetVersion.String(),
-			"stabilityDuration", stabilityDuration,
-			"annotationsBefore", fmt.Sprintf("%v", cluster.GetAnnotations()))
 		r.setHopCompletionAnnotation(cluster, effectiveVersion)
 		r.clearHopStartAnnotation(cluster)
 		r.clearCurrentHopTarget(cluster)
-		logger.Info("DEBUG MULTIHOP: Annotations after hop completion",
-			"annotationsAfter", fmt.Sprintf("%v", cluster.GetAnnotations()))
 		v1beta1.SetTemporalClusterReconcileSuccess(cluster, metav1.ConditionTrue,
 			v1beta1.MultiHopUpgradeInProgressReason,
 			fmt.Sprintf("Upgrading to %s (hop %s completed, stability wait %s)",
@@ -430,11 +297,6 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// running the previous version — especially dangerous during the last hop of a multi-hop
 	// upgrade where multiHopInProgress is false.
 	clusterReady := status.IsClusterReady(cluster)
-	logger.Info("DEBUG MULTIHOP: Final version or single-hop, checking readiness before success",
-		"effectiveVersion", effectiveVersion.String(),
-		"targetVersion", targetVersion.String(),
-		"status.version", cluster.Status.Version,
-		"isClusterReady", clusterReady)
 	if !clusterReady {
 		v1beta1.SetTemporalClusterReconcileSuccess(cluster, metav1.ConditionTrue,
 			v1beta1.ProgressingReason,
@@ -477,35 +339,21 @@ func (r *TemporalClusterReconciler) reconcileResources(ctx context.Context, temp
 		return err
 	}
 
-	logger := log.FromContext(ctx)
 	statuses, err := status.ReconciledObjectsToServiceStatuses(temporalCluster, objects)
 	if err != nil {
 		return err
 	}
 
 	for _, s := range statuses {
-		logger.Info("DEBUG MULTIHOP: reconcileResources: service status from deployment",
-			"service", s.Name,
-			"version", s.Version,
-			"ready", s.Ready)
 		temporalCluster.Status.AddServiceStatus(s)
 	}
 
 	observedMatch := status.ObservedVersionMatchesDesiredVersion(temporalCluster)
-	logger.Info("DEBUG MULTIHOP: reconcileResources: ObservedVersionMatchesDesiredVersion",
-		"result", observedMatch,
-		"spec.version", temporalCluster.Spec.Version.String(),
-		"status.version.before", temporalCluster.Status.Version)
 	if observedMatch {
 		temporalCluster.Status.Version = temporalCluster.Spec.Version.String()
-		logger.Info("DEBUG MULTIHOP: reconcileResources: Updated status.version",
-			"newStatusVersion", temporalCluster.Status.Version)
 	}
 
 	clusterReady := status.IsClusterReady(temporalCluster)
-	logger.Info("DEBUG MULTIHOP: reconcileResources: IsClusterReady",
-		"result", clusterReady,
-		"spec.version", temporalCluster.Spec.Version.String())
 	if clusterReady {
 		v1beta1.SetTemporalClusterReady(temporalCluster, metav1.ConditionTrue, v1beta1.ServicesReadyReason, "")
 	} else {
@@ -706,13 +554,11 @@ func (r *TemporalClusterReconciler) clearHopAnnotations(cluster *v1beta1.Tempora
 	if annotations == nil {
 		return
 	}
-	hopTime, hasTime := annotations[annotationLastHopTime]
-	hopVer, hasVersion := annotations[annotationLastHopVersion]
+	_, hasTime := annotations[annotationLastHopTime]
+	_, hasVersion := annotations[annotationLastHopVersion]
 	if !hasTime && !hasVersion {
 		return
 	}
-	// Log stack-trace-like info to track who's clearing these annotations
-	fmt.Printf("DEBUG MULTIHOP: clearHopAnnotations CLEARING lastHopTime=%s lastHopVersion=%s\n", hopTime, hopVer)
 	delete(annotations, annotationLastHopTime)
 	delete(annotations, annotationLastHopVersion)
 	cluster.SetAnnotations(annotations)
@@ -724,7 +570,7 @@ func (r *TemporalClusterReconciler) isUpgradePaused(cluster *v1beta1.TemporalClu
 	if annotations == nil {
 		return false
 	}
-	return annotations[annotationPauseUpgrade] == "true"
+	return annotations[annotationPauseUpgrade] == annotationTrue
 }
 
 // ensureHopStartAnnotation sets the hop start time annotation if not already present.
@@ -776,7 +622,7 @@ func (r *TemporalClusterReconciler) setAutoPause(cluster *v1beta1.TemporalCluste
 	if annotations == nil {
 		annotations = make(map[string]string)
 	}
-	annotations[annotationPauseUpgrade] = "true"
+	annotations[annotationPauseUpgrade] = annotationTrue
 	annotations["temporal.io/auto-paused-at-version"] = stuckVersion.String()
 	cluster.SetAnnotations(annotations)
 	r.Recorder.Event(cluster, corev1.EventTypeWarning, "HopTimeout",

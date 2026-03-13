@@ -31,7 +31,6 @@ import (
 	"github.com/alexandrevilain/temporal-operator/internal/resource/persistence"
 	"github.com/alexandrevilain/temporal-operator/pkg/version"
 	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 func sanitizeVersionToName(version *version.Version) string {
@@ -110,17 +109,8 @@ func getDatabaseScriptCommand(script string) []string {
 
 // reconcilePersistence tries to reconcile the cluster persistence.
 func (r *TemporalClusterReconciler) reconcilePersistence(ctx context.Context, cluster *v1beta1.TemporalCluster) (time.Duration, error) {
-	logger := log.FromContext(ctx)
 	// First of all, ensure status fields are set.
 	r.reconcilePersistenceStatus(cluster)
-
-	schemaVerBefore := ""
-	if cluster.Status.Persistence != nil && cluster.Status.Persistence.DefaultStore != nil && cluster.Status.Persistence.DefaultStore.SchemaVersion != nil {
-		schemaVerBefore = cluster.Status.Persistence.DefaultStore.SchemaVersion.String()
-	}
-	logger.Info("DEBUG MULTIHOP: reconcilePersistence entry",
-		"spec.version", cluster.Spec.Version.String(),
-		"schemaVersionBefore", schemaVerBefore)
 
 	// Ensure the configmap containing scripts is up-to-date
 	_, err := r.Reconciler.ReconcileBuilder(ctx, cluster, persistence.NewSchemaScriptsConfigmapBuilder(cluster, r.Scheme))
@@ -195,28 +185,14 @@ func (r *TemporalClusterReconciler) reconcilePersistence(ctx context.Context, cl
 			Skip: func(owner runtime.Object) bool {
 				c := owner.(*v1beta1.TemporalCluster)
 				if c.Status.Persistence.DefaultStore.SchemaVersion == nil {
-					logger.Info("DEBUG MULTIHOP: update-default-schema Skip check: schemaVersion is nil, NOT skipping")
 					return false
 				}
-				skip := c.Status.Persistence.DefaultStore.SchemaVersion.GreaterOrEqual(cluster.Spec.Version)
-				logger.Info("DEBUG MULTIHOP: update-default-schema Skip check",
-					"schemaVersion", c.Status.Persistence.DefaultStore.SchemaVersion.String(),
-					"spec.version", cluster.Spec.Version.String(),
-					"skip", skip)
-				return skip
+				return c.Status.Persistence.DefaultStore.SchemaVersion.GreaterOrEqual(cluster.Spec.Version)
 			},
 			ReportSuccess: func(owner runtime.Object) error {
 				c := owner.(*v1beta1.TemporalCluster)
-				oldSchema := ""
-				if c.Status.Persistence.DefaultStore.SchemaVersion != nil {
-					oldSchema = c.Status.Persistence.DefaultStore.SchemaVersion.String()
-				}
 				c.Status.Persistence.DefaultStore.SchemaVersion = c.Spec.Version.DeepCopy()
 				c.Status.Persistence.DefaultStore.Type = c.Spec.Persistence.DefaultStore.GetType()
-				logger.Info("DEBUG MULTIHOP: update-default-schema COMPLETED",
-					"oldSchemaVersion", oldSchema,
-					"newSchemaVersion", c.Status.Persistence.DefaultStore.SchemaVersion.String(),
-					"spec.version", c.Spec.Version.String())
 				return nil
 			},
 		},
@@ -340,16 +316,6 @@ func (r *TemporalClusterReconciler) reconcilePersistence(ctx context.Context, cl
 	}
 
 	requeueAfter, err := r.Jobs.Reconcile(ctx, cluster, factory, jobs)
-
-	schemaVerAfter := ""
-	if cluster.Status.Persistence != nil && cluster.Status.Persistence.DefaultStore != nil && cluster.Status.Persistence.DefaultStore.SchemaVersion != nil {
-		schemaVerAfter = cluster.Status.Persistence.DefaultStore.SchemaVersion.String()
-	}
-	logger.Info("DEBUG MULTIHOP: reconcilePersistence exit",
-		"schemaVersionBefore", schemaVerBefore,
-		"schemaVersionAfter", schemaVerAfter,
-		"requeueAfter", requeueAfter,
-		"err", err)
 
 	return requeueAfter, err
 }
