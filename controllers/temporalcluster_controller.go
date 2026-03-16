@@ -201,6 +201,14 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		multiHopInProgress = false
 		effectiveVersion = r.getCurrentVersion(cluster)
 		r.clearCurrentHopTarget(cluster)
+		// Override spec.version to the current running version so that downstream
+		// reconcilers (persistence, deployments) don't use the final target version.
+		// Without this, schema migration jobs would target spec.version (e.g. 1.28.2)
+		// instead of the current version (e.g. 1.25.2), bypassing intermediate hops.
+		cluster.Spec.Version = effectiveVersion
+		defer func() {
+			cluster.Spec.Version = targetVersion
+		}()
 	}
 
 	if multiHopInProgress {
