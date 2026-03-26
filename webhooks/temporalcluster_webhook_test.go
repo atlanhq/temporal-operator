@@ -476,9 +476,9 @@ func TestValidateIntermediateVersions(t *testing.T) {
 					Name: "fake",
 				},
 				Spec: v1beta1.TemporalClusterSpec{
-					Version: version.MustNewVersionFromString("1.28.2"),
+					Version: version.MustNewVersionFromString("1.29.4"),
 					VersionUpgrade: &v1beta1.VersionUpgradeSpec{
-						IntermediateVersions: []string{"1.26.3", "1.27.4"},
+						IntermediateVersions: []string{"1.26.3", "1.27.4", "1.28.2"},
 					},
 				},
 			},
@@ -490,7 +490,7 @@ func TestValidateIntermediateVersions(t *testing.T) {
 					Name: "fake",
 				},
 				Spec: v1beta1.TemporalClusterSpec{
-					Version: version.MustNewVersionFromString("1.28.2"),
+					Version: version.MustNewVersionFromString("1.29.4"),
 					VersionUpgrade: &v1beta1.VersionUpgradeSpec{
 						IntermediateVersions: []string{"1.26.3", "1.28.1"},
 					},
@@ -520,7 +520,7 @@ func TestValidateIntermediateVersions(t *testing.T) {
 					Name: "fake",
 				},
 				Spec: v1beta1.TemporalClusterSpec{
-					Version: version.MustNewVersionFromString("1.28.2"),
+					Version: version.MustNewVersionFromString("1.29.4"),
 					VersionUpgrade: &v1beta1.VersionUpgradeSpec{
 						IntermediateVersions: []string{"1.27.0"},
 					},

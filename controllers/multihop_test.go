@@ -60,24 +60,24 @@ func TestGetCurrentVersion(t *testing.T) {
 		expected string
 	}{
 		"prefers status.version over schemaVersion": {
-			cluster:  clusterWithStatus("1.28.2", "1.25.2", "1.26.3"),
+			cluster:  clusterWithStatus("1.29.4", "1.25.2", "1.26.3"),
 			expected: "1.25.2",
 		},
 		"falls back to schemaVersion when status.version is empty": {
-			cluster:  clusterWithStatus("1.28.2", "", "1.26.3"),
+			cluster:  clusterWithStatus("1.29.4", "", "1.26.3"),
 			expected: "1.26.3",
 		},
 		"falls back to spec.version when both are empty": {
-			cluster:  clusterWithStatus("1.28.2", "", ""),
-			expected: "1.28.2",
+			cluster:  clusterWithStatus("1.29.4", "", ""),
+			expected: "1.29.4",
 		},
 		"status.version takes priority even when behind schemaVersion": {
-			cluster:  clusterWithStatus("1.28.2", "1.24.2", "1.27.4"),
+			cluster:  clusterWithStatus("1.29.4", "1.24.2", "1.27.4"),
 			expected: "1.24.2",
 		},
 		"status.version at target version": {
-			cluster:  clusterWithStatus("1.28.2", "1.28.2", "1.28.2"),
-			expected: "1.28.2",
+			cluster:  clusterWithStatus("1.29.4", "1.29.4", "1.29.4"),
+			expected: "1.29.4",
 		},
 	}
 
@@ -106,14 +106,14 @@ func TestComputeEffectiveVersion(t *testing.T) {
 			expected:      "1.26.3",
 		},
 		"multi-hop returns first intermediate from registry": {
-			specVersion:   "1.28.2",
+			specVersion:   "1.29.4",
 			statusVersion: "1.25.2",
 			expected:      "1.26.3",
 		},
 		"multi-hop with user-specified intermediates": {
-			specVersion:   "1.28.2",
+			specVersion:   "1.29.4",
 			statusVersion: "1.25.2",
-			intermediates: []string{"1.26.3", "1.27.4"},
+			intermediates: []string{"1.26.3", "1.27.4", "1.28.2"},
 			expected:      "1.26.3",
 		},
 		"same version returns target": {
@@ -122,7 +122,7 @@ func TestComputeEffectiveVersion(t *testing.T) {
 			expected:      "1.25.2",
 		},
 		"uses status.version not schemaVersion for hop computation": {
-			specVersion:   "1.28.2",
+			specVersion:   "1.29.4",
 			statusVersion: "1.25.2",
 			schemaVersion: "1.27.4", // schema is ahead, but status.version matters
 			expected:      "1.26.3",
@@ -318,7 +318,7 @@ func TestRemainingStabilityWait(t *testing.T) {
 		t.Run(name, func(tt *testing.T) {
 			cluster := &v1beta1.TemporalCluster{
 				Spec: v1beta1.TemporalClusterSpec{
-					Version: version.MustNewVersionFromString("1.28.2"),
+					Version: version.MustNewVersionFromString("1.29.4"),
 				},
 			}
 			if test.annotations != nil {
@@ -350,7 +350,7 @@ func TestGetCurrentVersionStatusSetSchemaAhead(t *testing.T) {
 	// Otherwise computeEffectiveVersion would skip a hop.
 	cluster := &v1beta1.TemporalCluster{
 		Spec: v1beta1.TemporalClusterSpec{
-			Version: version.MustNewVersionFromString("1.28.2"),
+			Version: version.MustNewVersionFromString("1.29.4"),
 		},
 		Status: v1beta1.TemporalClusterStatus{
 			Version: "1.25.2", // pods are still at 1.25.2
@@ -379,7 +379,7 @@ func TestGetCurrentVersionEmptyStatusWithSchemaFallback(t *testing.T) {
 	// we fall back to schema version. This handles operator restart mid-migration.
 	cluster := &v1beta1.TemporalCluster{
 		Spec: v1beta1.TemporalClusterSpec{
-			Version: version.MustNewVersionFromString("1.28.2"),
+			Version: version.MustNewVersionFromString("1.29.4"),
 		},
 		Status: v1beta1.TemporalClusterStatus{
 			Version: "", // never set
@@ -722,10 +722,10 @@ func TestE2EMultiHopStabilityWaitRespected(t *testing.T) {
 
 	cluster := &v1beta1.TemporalCluster{
 		Spec: v1beta1.TemporalClusterSpec{
-			Version: version.MustNewVersionFromString("1.28.2"),
+			Version: version.MustNewVersionFromString("1.29.4"),
 			VersionUpgrade: &v1beta1.VersionUpgradeSpec{
 				StabilityDuration:    &metav1.Duration{Duration: 5 * time.Minute},
-				IntermediateVersions: []string{"1.26.3", "1.27.4"},
+				IntermediateVersions: []string{"1.26.3", "1.27.4", "1.28.2"},
 			},
 		},
 		Status: v1beta1.TemporalClusterStatus{
@@ -753,7 +753,7 @@ func TestE2EMultiHopStabilityWaitRespected(t *testing.T) {
 	assert.Equal(t, "1.26.3", cluster.Status.Version, "Reconcile 1: status.version should be 1.26.3")
 
 	// Verify spec.version was restored by defer
-	assert.Equal(t, "1.28.2", cluster.Spec.Version.String(), "Reconcile 1: spec.version should be restored to target")
+	assert.Equal(t, "1.29.4", cluster.Spec.Version.String(), "Reconcile 1: spec.version should be restored to target")
 
 	// === Reconcile 2: Pods are now ready at 1.26.3 ===
 	// This is the critical test: the old code would compute effectiveVersion=1.27.4
@@ -804,11 +804,29 @@ func TestE2EMultiHopStabilityWaitRespected(t *testing.T) {
 	// === Simulate stability wait expiry for hop 2 ===
 	cluster.Annotations[annotationLastHopTime] = time.Now().Add(-10 * time.Minute).UTC().Format(time.RFC3339)
 
-	// === Reconcile 6: Final hop to 1.28.2 ===
+	// === Reconcile 6: Hop 3 to 1.28.2 ===
+	effective, multiHop, stabilityWait = simulateReconcileCycle(r, cluster, false)
+	assert.Equal(t, "1.28.2", effective, "Reconcile 6: should target 1.28.2")
+	assert.True(t, multiHop, "Reconcile 6: multi-hop should be in progress")
+	assert.False(t, stabilityWait, "Reconcile 6: stability wait should NOT trigger (new hop, pods not ready)")
+	assert.Equal(t, "1.28.2", r.getCurrentHopTarget(cluster), "Reconcile 6: hop target should be 1.28.2")
+
+	// === Reconcile 7: Pods ready at 1.28.2 ===
 	effective, multiHop, stabilityWait = simulateReconcileCycle(r, cluster, true)
-	assert.Equal(t, "1.28.2", effective, "Reconcile 6: should target 1.28.2 (final)")
-	assert.False(t, multiHop, "Reconcile 6: multi-hop should be false (effective == target)")
-	assert.False(t, stabilityWait, "Reconcile 6: no stability wait for final version")
+	assert.Equal(t, "1.28.2", effective, "Reconcile 7: should still target 1.28.2")
+	assert.True(t, multiHop, "Reconcile 7: multi-hop should be in progress")
+	assert.True(t, stabilityWait, "Reconcile 7: stability wait MUST trigger (hop 3 completed)")
+	assert.Equal(t, "1.28.2", cluster.GetAnnotations()[annotationLastHopVersion])
+	assert.Equal(t, "", r.getCurrentHopTarget(cluster), "Reconcile 7: hop target should be cleared")
+
+	// === Simulate stability wait expiry for hop 3 ===
+	cluster.Annotations[annotationLastHopTime] = time.Now().Add(-10 * time.Minute).UTC().Format(time.RFC3339)
+
+	// === Reconcile 8: Final hop to 1.29.4 ===
+	effective, multiHop, stabilityWait = simulateReconcileCycle(r, cluster, true)
+	assert.Equal(t, "1.29.4", effective, "Reconcile 8: should target 1.29.4 (final)")
+	assert.False(t, multiHop, "Reconcile 8: multi-hop should be false (effective == target)")
+	assert.False(t, stabilityWait, "Reconcile 8: no stability wait for final version")
 
 	// Verify all hop annotations are cleaned up
 	annotations = cluster.GetAnnotations()
@@ -831,10 +849,10 @@ func TestE2EMultiHopNeverSkipsVersion(t *testing.T) {
 
 	cluster := &v1beta1.TemporalCluster{
 		Spec: v1beta1.TemporalClusterSpec{
-			Version: version.MustNewVersionFromString("1.28.2"),
+			Version: version.MustNewVersionFromString("1.29.4"),
 			VersionUpgrade: &v1beta1.VersionUpgradeSpec{
 				StabilityDuration:    &metav1.Duration{Duration: 5 * time.Minute},
-				IntermediateVersions: []string{"1.26.3", "1.27.4"},
+				IntermediateVersions: []string{"1.26.3", "1.27.4", "1.28.2"},
 			},
 		},
 		Status: v1beta1.TemporalClusterStatus{
@@ -854,9 +872,9 @@ func TestE2EMultiHopNeverSkipsVersion(t *testing.T) {
 	prevMinor := uint64(25) // starting minor
 
 	// Run through the full upgrade with mixed ready/not-ready cycles
-	for cycle := 0; cycle < 20; cycle++ {
+	for cycle := 0; cycle < 30; cycle++ {
 		// Check if we're done
-		if cluster.Status.Version == "1.28.2" && r.getCurrentHopTarget(cluster) == "" {
+		if cluster.Status.Version == "1.29.4" && r.getCurrentHopTarget(cluster) == "" {
 			_, waiting := r.remainingStabilityWait(cluster)
 			if !waiting {
 				break
@@ -895,6 +913,7 @@ func TestE2EMultiHopNeverSkipsVersion(t *testing.T) {
 	assert.Contains(t, seenVersions, "1.26.3", "should have seen 1.26.3")
 	assert.Contains(t, seenVersions, "1.27.4", "should have seen 1.27.4")
 	assert.Contains(t, seenVersions, "1.28.2", "should have seen 1.28.2")
+	assert.Contains(t, seenVersions, "1.29.4", "should have seen 1.29.4")
 }
 
 func TestE2EHopTargetPersistsAcrossReconciles(t *testing.T) {
@@ -905,10 +924,10 @@ func TestE2EHopTargetPersistsAcrossReconciles(t *testing.T) {
 
 	cluster := &v1beta1.TemporalCluster{
 		Spec: v1beta1.TemporalClusterSpec{
-			Version: version.MustNewVersionFromString("1.28.2"),
+			Version: version.MustNewVersionFromString("1.29.4"),
 			VersionUpgrade: &v1beta1.VersionUpgradeSpec{
 				StabilityDuration:    &metav1.Duration{Duration: 5 * time.Minute},
-				IntermediateVersions: []string{"1.26.3", "1.27.4"},
+				IntermediateVersions: []string{"1.26.3", "1.27.4", "1.28.2"},
 			},
 		},
 		Status: v1beta1.TemporalClusterStatus{
@@ -927,9 +946,9 @@ func TestE2EHopTargetPersistsAcrossReconciles(t *testing.T) {
 
 	// Simulate what the patch helper does: status.version is now 1.26.3
 	// (set by ObservedVersionMatchesDesiredVersion inside reconcileResources)
-	// but spec.version is restored to 1.28.2 by the defer
+	// but spec.version is restored to 1.29.4 by the defer
 	assert.Equal(t, "1.26.3", cluster.Status.Version)
-	assert.Equal(t, "1.28.2", cluster.Spec.Version.String())
+	assert.Equal(t, "1.29.4", cluster.Spec.Version.String())
 
 	// Without the fix, computeEffectiveVersion(1.26.3, 1.28.2) would return 1.27.4
 	// With the fix, getCurrentHopTarget returns "1.26.3" and we stick with it
@@ -957,10 +976,10 @@ func TestE2EPauseAnnotationDuringHop(t *testing.T) {
 
 	cluster := &v1beta1.TemporalCluster{
 		Spec: v1beta1.TemporalClusterSpec{
-			Version: version.MustNewVersionFromString("1.28.2"),
+			Version: version.MustNewVersionFromString("1.29.4"),
 			VersionUpgrade: &v1beta1.VersionUpgradeSpec{
 				StabilityDuration:    &metav1.Duration{Duration: 5 * time.Minute},
-				IntermediateVersions: []string{"1.26.3", "1.27.4"},
+				IntermediateVersions: []string{"1.26.3", "1.27.4", "1.28.2"},
 			},
 		},
 		Status: v1beta1.TemporalClusterStatus{

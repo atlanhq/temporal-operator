@@ -34,6 +34,7 @@ var RecommendedVersions = map[uint64]string{
 	26: "1.26.3",
 	27: "1.27.4",
 	28: "1.28.2",
+	29: "1.29.4",
 }
 
 // NextUpgradeHop returns the next intermediate version to upgrade to,
