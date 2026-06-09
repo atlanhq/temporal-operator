@@ -24,6 +24,69 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestFilterOperatorAnnotations(t *testing.T) {
+	tests := map[string]struct {
+		annotations map[string]string
+		expected    map[string]string
+	}{
+		"nil annotations returns empty map": {
+			annotations: nil,
+			expected:    map[string]string{},
+		},
+		"no operator annotations passes through unchanged": {
+			annotations: map[string]string{
+				"user-annotation":          "value",
+				"some.other.io/annotation": "value2",
+			},
+			expected: map[string]string{
+				"user-annotation":          "value",
+				"some.other.io/annotation": "value2",
+			},
+		},
+		"all six operator-internal annotations are stripped": {
+			annotations: map[string]string{
+				"temporal.io/current-hop-target":            "1.27.4",
+				"temporal.io/hop-start-time":                "2026-03-18T10:00:00Z",
+				"temporal.io/last-intermediate-hop-time":    "2026-03-18T09:00:00Z",
+				"temporal.io/last-intermediate-hop-version": "1.26.3",
+				"temporal.io/pause-upgrade":                 "true",
+				"temporal.io/auto-paused-at-version":        "1.27.4",
+			},
+			expected: map[string]string{},
+		},
+		"operator annotations stripped but user annotations preserved": {
+			annotations: map[string]string{
+				"temporal.io/current-hop-target": "1.27.4",
+				"temporal.io/hop-start-time":     "2026-03-18T10:00:00Z",
+				"user-defined":                   "keep",
+				"another.io/annotation":           "also-keep",
+			},
+			expected: map[string]string{
+				"user-defined":          "keep",
+				"another.io/annotation": "also-keep",
+			},
+		},
+		"non-temporal.io annotation with similar prefix is kept": {
+			annotations: map[string]string{
+				"temporal.io/current-hop-target": "1.27.4",
+				"not-temporal.io/something":      "keep",
+				"temporalcluster/annotation":     "also-keep",
+			},
+			expected: map[string]string{
+				"not-temporal.io/something":  "keep",
+				"temporalcluster/annotation": "also-keep",
+			},
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(tt *testing.T) {
+			result := metadata.FilterOperatorAnnotations(test.annotations)
+			assert.Equal(tt, test.expected, result)
+		})
+	}
+}
+
 func TestFilterAnnotations(t *testing.T) {
 	tests := map[string]struct {
 		annotations map[string]string

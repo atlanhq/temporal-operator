@@ -172,9 +172,31 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	if hopTarget := r.getCurrentHopTarget(cluster); hopTarget != "" {
 		hopTargetVersion, parseErr := version.NewVersionFromString(hopTarget)
-		if parseErr == nil && targetVersion != nil && hopTarget != targetVersion.String() {
-			effectiveVersion = hopTargetVersion
-			multiHopInProgress = true
+		if parseErr != nil {
+			// Unparseable hop target: annotation is corrupt, clear it.
+			logger.Error(parseErr, "Clearing unparseable hop-target annotation", "hopTarget", hopTarget)
+			r.clearCurrentHopTarget(cluster)
+			r.clearHopStartAnnotation(cluster)
+		} else {
+			currentVersion := r.getCurrentVersion(cluster)
+			if currentVersion != nil && hopTargetVersion.LessThan(currentVersion) {
+				// Stale hop: the hop target is strictly behind the current running version,
+				// meaning the cluster has already advanced past it. This happens when the
+				// operator is interrupted after a hop completes but before the annotation is
+				// cleared (e.g. crash/restart). Without this guard the operator re-enters
+				// multiHopInProgress, sets spec.version to the stale target, and
+				// continuously patches Deployments to run an older image — perpetual loop.
+				// Note: we use strict LessThan, not <=. When hopTarget == currentVersion
+				// the hop may have just completed but not yet been acknowledged; the
+				// existing completion path handles that case correctly in one extra cycle.
+				logger.Info("Clearing stale hop-target annotation: target is strictly behind current running version",
+					"hopTarget", hopTarget, "currentVersion", currentVersion.String())
+				r.clearCurrentHopTarget(cluster)
+				r.clearHopStartAnnotation(cluster)
+			} else if targetVersion != nil && hopTarget != targetVersion.String() {
+				effectiveVersion = hopTargetVersion
+				multiHopInProgress = true
+			}
 		}
 	}
 

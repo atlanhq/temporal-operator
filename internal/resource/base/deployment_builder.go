@@ -66,7 +66,7 @@ func (b *DeploymentBuilder) Build() client.Object {
 			Name:        b.instance.ChildResourceName(b.serviceName),
 			Namespace:   b.instance.Namespace,
 			Labels:      metadata.GetLabels(b.instance, b.serviceName, b.instance.Spec.Version, b.instance.Labels),
-			Annotations: metadata.GetAnnotations(b.instance.Name, b.instance.Annotations),
+			Annotations: metadata.GetAnnotations(b.instance.Name, metadata.FilterOperatorAnnotations(b.instance.Annotations)),
 		},
 	}
 }
@@ -81,9 +81,12 @@ func (b *DeploymentBuilder) Update(object client.Object) error {
 		object.GetLabels(),
 		metadata.GetLabels(b.instance, b.serviceName, b.instance.Spec.Version, b.instance.Labels),
 	)
+	// Strip operator-internal annotations from both the existing Deployment and the CR
+	// before merging. This removes stale hop annotations from Deployments that were
+	// written by an older reconcile and clears them going forward.
 	deployment.Annotations = metadata.Merge(
-		object.GetAnnotations(),
-		metadata.GetAnnotations(b.instance.Name, b.instance.Annotations),
+		metadata.FilterOperatorAnnotations(object.GetAnnotations()),
+		metadata.GetAnnotations(b.instance.Name, metadata.FilterOperatorAnnotations(b.instance.Annotations)),
 	)
 
 	// worker has no grpc endpoint so omit liveness probe
