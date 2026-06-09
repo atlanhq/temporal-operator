@@ -172,9 +172,28 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	if hopTarget := r.getCurrentHopTarget(cluster); hopTarget != "" {
 		hopTargetVersion, parseErr := version.NewVersionFromString(hopTarget)
-		if parseErr == nil && targetVersion != nil && hopTarget != targetVersion.String() {
-			effectiveVersion = hopTargetVersion
-			multiHopInProgress = true
+		if parseErr != nil {
+			// Unparseable hop target: annotation is corrupt, clear it.
+			logger.Info("Clearing unparseable hop-target annotation", "hopTarget", hopTarget)
+			r.clearCurrentHopTarget(cluster)
+			r.clearHopStartAnnotation(cluster)
+		} else {
+			currentVersion := r.getCurrentVersion(cluster)
+			if currentVersion != nil && currentVersion.GreaterOrEqual(hopTargetVersion) {
+				// Stale hop: the cluster is already at or past the hop target.
+				// This happens when the operator is interrupted after a hop completes
+				// but before the annotation is cleared (e.g. operator crash/restart).
+				// Without this guard the operator re-enters multiHopInProgress, sets
+				// spec.version to the stale target, and continuously patches Deployments
+				// to run an older image — causing a perpetual reconcile/restart loop.
+				logger.Info("Clearing stale hop-target annotation: cluster is already at or past the target",
+					"hopTarget", hopTarget, "currentVersion", currentVersion.String())
+				r.clearCurrentHopTarget(cluster)
+				r.clearHopStartAnnotation(cluster)
+			} else if targetVersion != nil && hopTarget != targetVersion.String() {
+				effectiveVersion = hopTargetVersion
+				multiHopInProgress = true
+			}
 		}
 	}
 

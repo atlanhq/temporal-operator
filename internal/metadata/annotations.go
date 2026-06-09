@@ -17,6 +17,18 @@
 
 package metadata
 
+// operatorInternalAnnotations are managed exclusively by the temporal-operator
+// for upgrade state tracking. They must not propagate to child resources
+// (Deployments, Pod templates) to prevent spurious diffs and rolling restarts.
+var operatorInternalAnnotations = map[string]bool{
+	"temporal.io/current-hop-target":             true,
+	"temporal.io/hop-start-time":                 true,
+	"temporal.io/last-intermediate-hop-time":     true,
+	"temporal.io/last-intermediate-hop-version":  true,
+	"temporal.io/pause-upgrade":                  true,
+	"temporal.io/auto-paused-at-version":         true,
+}
+
 // GetAnnotations returns service annotations.
 func GetAnnotations(_ string, annotations ...map[string]string) map[string]string {
 	return Merge(annotations...)
@@ -32,4 +44,12 @@ func FilterAnnotations(annotations map[string]string, fn func(k, v string) bool)
 		}
 	}
 	return result
+}
+
+// FilterOperatorAnnotations removes operator-internal state-tracking annotations
+// so they are not propagated to child resources (Deployments, Pod templates).
+func FilterOperatorAnnotations(annotations map[string]string) map[string]string {
+	return FilterAnnotations(annotations, func(k, _ string) bool {
+		return !operatorInternalAnnotations[k]
+	})
 }
