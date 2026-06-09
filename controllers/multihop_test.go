@@ -627,13 +627,23 @@ func simulateReconcileCycle(r *TemporalClusterReconciler, cluster *v1beta1.Tempo
 
 	targetVersion := cluster.Spec.Version
 
-	// Step 2: Check for in-flight hop target
+	// Step 2: Check for in-flight hop target (mirrors stale-hop guard in Reconcile)
 	var effective *version.Version
 	if hopTarget := r.getCurrentHopTarget(cluster); hopTarget != "" {
-		hopTargetVersion, err := version.NewVersionFromString(hopTarget)
-		if err == nil && targetVersion != nil && hopTarget != targetVersion.String() {
-			effective = hopTargetVersion
-			multiHopInProgress = true
+		hopTargetVersion, parseErr := version.NewVersionFromString(hopTarget)
+		if parseErr != nil {
+			r.clearCurrentHopTarget(cluster)
+			r.clearHopStartAnnotation(cluster)
+		} else {
+			currentVersion := r.getCurrentVersion(cluster)
+			if currentVersion != nil && hopTargetVersion.LessThan(currentVersion) {
+				// Stale hop: target is strictly behind current — clear and skip.
+				r.clearCurrentHopTarget(cluster)
+				r.clearHopStartAnnotation(cluster)
+			} else if targetVersion != nil && hopTarget != targetVersion.String() {
+				effective = hopTargetVersion
+				multiHopInProgress = true
+			}
 		}
 	}
 
@@ -1022,6 +1032,178 @@ func TestE2EPauseAnnotationDuringHop(t *testing.T) {
 	effective, multiHop, _ := simulateReconcileCycle(r, cluster, false)
 	assert.Equal(t, "1.27.4", effective, "should recompute hop from current state after pause")
 	assert.True(t, multiHop)
+}
+
+// TestStaleHopAnnotationGuard covers the root cause of TWC_HighReconcileErrorRate on tredence:
+// temporal.io/current-hop-target left on the TemporalCluster CR after an operator
+// crash/restart caused a perpetual downgrade loop because the reconciler re-entered
+// multiHopInProgress targeting the stale (already-completed) intermediate version.
+func TestStaleHopAnnotationGuard(t *testing.T) {
+	r := newReconciler()
+
+	t.Run("stale annotation cleared when cluster is ahead of hop target", func(tt *testing.T) {
+		// Tredence scenario: current-hop-target=1.27.4 left on CR, cluster already at 1.29.4.
+		cluster := &v1beta1.TemporalCluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					annotationCurrentHopTarget: "1.27.4",
+					annotationHopStartTime:     "2026-03-18T10:00:00Z",
+				},
+			},
+			Spec: v1beta1.TemporalClusterSpec{
+				Version: version.MustNewVersionFromString("1.29.4"),
+			},
+			Status: v1beta1.TemporalClusterStatus{
+				Version: "1.29.4",
+			},
+		}
+
+		effective, multiHop, stabilityWait := simulateReconcileCycle(r, cluster, true)
+
+		assert.False(tt, multiHop, "stale hop must not trigger multiHopInProgress")
+		assert.False(tt, stabilityWait, "stale hop must not trigger stability wait")
+		assert.Equal(tt, "1.29.4", effective, "effective version must be the current/target, not 1.27.4")
+		assert.Equal(tt, "", r.getCurrentHopTarget(cluster), "stale hop-target annotation must be cleared")
+		_, hasStart := cluster.GetAnnotations()[annotationHopStartTime]
+		assert.False(tt, hasStart, "stale hop-start-time annotation must be cleared")
+	})
+
+	t.Run("annotation at current version is not treated as stale (existing completion path handles it)", func(tt *testing.T) {
+		// Boundary: hop-target == current version. This is NOT treated as stale because
+		// the hop may have just completed but not yet been acknowledged (e.g. operator
+		// restarted between setHopCompletionAnnotation and clearCurrentHopTarget).
+		// The existing completion path re-executes the completion logic in one extra cycle.
+		cluster := &v1beta1.TemporalCluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					annotationCurrentHopTarget: "1.27.4",
+				},
+			},
+			Spec: v1beta1.TemporalClusterSpec{
+				Version: version.MustNewVersionFromString("1.29.4"),
+				VersionUpgrade: &v1beta1.VersionUpgradeSpec{
+					IntermediateVersions: []string{"1.26.3", "1.27.4", "1.28.2"},
+				},
+			},
+			Status: v1beta1.TemporalClusterStatus{
+				Version: "1.27.4",
+				Services: []v1beta1.ServiceStatus{
+					{Name: "frontend", Ready: true, Version: "1.27.4"},
+				},
+			},
+		}
+
+		// One cycle with services ready: the hop at 1.27.4 completes, annotation is cleared.
+		_, multiHop, stabilityWait := simulateReconcileCycle(r, cluster, true)
+
+		assert.True(tt, multiHop, "hop at current version re-enters the in-progress path for completion")
+		assert.True(tt, stabilityWait, "completion path sets stability wait")
+		assert.Equal(tt, "", r.getCurrentHopTarget(cluster), "annotation cleared by completion path")
+	})
+
+	t.Run("unparseable hop target annotation is cleared", func(tt *testing.T) {
+		cluster := &v1beta1.TemporalCluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					annotationCurrentHopTarget: "not-a-semver",
+					annotationHopStartTime:     "2026-03-18T10:00:00Z",
+				},
+			},
+			Spec: v1beta1.TemporalClusterSpec{
+				Version: version.MustNewVersionFromString("1.29.4"),
+			},
+			Status: v1beta1.TemporalClusterStatus{
+				Version: "1.29.4",
+			},
+		}
+
+		_, multiHop, _ := simulateReconcileCycle(r, cluster, true)
+
+		assert.False(tt, multiHop, "unparseable hop target must not trigger multiHopInProgress")
+		assert.Equal(tt, "", r.getCurrentHopTarget(cluster), "unparseable hop-target annotation must be cleared")
+		_, hasStart := cluster.GetAnnotations()[annotationHopStartTime]
+		assert.False(tt, hasStart, "hop-start-time annotation must be cleared alongside corrupt hop target")
+	})
+
+	t.Run("valid in-flight hop is not cleared", func(tt *testing.T) {
+		// Hop to 1.27.4 is genuinely in progress: cluster is at 1.25.2, target is 1.29.4.
+		cluster := &v1beta1.TemporalCluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					annotationCurrentHopTarget: "1.27.4",
+				},
+			},
+			Spec: v1beta1.TemporalClusterSpec{
+				Version: version.MustNewVersionFromString("1.29.4"),
+				VersionUpgrade: &v1beta1.VersionUpgradeSpec{
+					IntermediateVersions: []string{"1.26.3", "1.27.4", "1.28.2"},
+				},
+			},
+			Status: v1beta1.TemporalClusterStatus{
+				Version: "1.25.2",
+				Services: []v1beta1.ServiceStatus{
+					{Name: "frontend", Ready: false, Version: "1.25.2"},
+				},
+			},
+		}
+
+		effective, multiHop, _ := simulateReconcileCycle(r, cluster, false)
+
+		assert.True(tt, multiHop, "valid in-flight hop must remain in multiHopInProgress")
+		assert.Equal(tt, "1.27.4", effective, "effective version must honour the in-flight hop target")
+		assert.Equal(tt, "1.27.4", r.getCurrentHopTarget(cluster), "hop-target annotation must not be cleared")
+	})
+}
+
+func TestE2EStaleHopDoesNotTriggerDowngrade(t *testing.T) {
+	// Full end-to-end reproduction of the tredence incident:
+	// Cluster finished upgrading to 1.29.4 but temporal.io/current-hop-target: 1.27.4
+	// was left on the TemporalCluster CR (operator interrupted between hop completion
+	// and annotation clear). Without the guard, every reconcile would set
+	// spec.version=1.27.4, patch Deployments to the 1.27.4 image, find the cluster
+	// "not ready at 1.27.4", and requeue in 10s — forever.
+
+	r := newReconciler()
+
+	cluster := &v1beta1.TemporalCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				// Stale annotation from March 18 upgrade hop
+				annotationCurrentHopTarget: "1.27.4",
+				annotationHopStartTime:     "2026-03-18T10:00:00Z",
+			},
+		},
+		Spec: v1beta1.TemporalClusterSpec{
+			Version: version.MustNewVersionFromString("1.29.4"),
+		},
+		Status: v1beta1.TemporalClusterStatus{
+			Version: "1.29.4", // cluster is fully upgraded
+			Services: []v1beta1.ServiceStatus{
+				{Name: "frontend", Ready: true, Version: "1.29.4"},
+				{Name: "history", Ready: true, Version: "1.29.4"},
+				{Name: "matching", Ready: true, Version: "1.29.4"},
+				{Name: "worker", Ready: true, Version: "1.29.4"},
+				{Name: "internal-frontend", Ready: true, Version: "1.29.4"},
+			},
+		},
+	}
+
+	// Run 5 consecutive reconciles — each should converge, not loop.
+	for i := 0; i < 5; i++ {
+		effective, multiHop, stabilityWait := simulateReconcileCycle(r, cluster, true)
+
+		assert.False(t, multiHop,
+			"reconcile %d: stale hop annotation must not put operator into multiHopInProgress", i+1)
+		assert.False(t, stabilityWait,
+			"reconcile %d: no stability wait expected for a fully-upgraded cluster", i+1)
+		assert.Equal(t, "1.29.4", effective,
+			"reconcile %d: effective version must be 1.29.4, not the stale 1.27.4 target", i+1)
+	}
+
+	// The stale annotations must be gone after the first reconcile.
+	assert.Equal(t, "", r.getCurrentHopTarget(cluster), "hop-target annotation must be cleared")
+	_, hasStart := cluster.GetAnnotations()[annotationHopStartTime]
+	assert.False(t, hasStart, "hop-start-time annotation must be cleared")
 }
 
 // fakeRecorder implements record.EventRecorder for tests.

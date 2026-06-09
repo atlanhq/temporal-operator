@@ -179,14 +179,17 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			r.clearHopStartAnnotation(cluster)
 		} else {
 			currentVersion := r.getCurrentVersion(cluster)
-			if currentVersion != nil && currentVersion.GreaterOrEqual(hopTargetVersion) {
-				// Stale hop: the cluster is already at or past the hop target.
-				// This happens when the operator is interrupted after a hop completes
-				// but before the annotation is cleared (e.g. operator crash/restart).
-				// Without this guard the operator re-enters multiHopInProgress, sets
-				// spec.version to the stale target, and continuously patches Deployments
-				// to run an older image — causing a perpetual reconcile/restart loop.
-				logger.Info("Clearing stale hop-target annotation: cluster is already at or past the target",
+			if currentVersion != nil && hopTargetVersion.LessThan(currentVersion) {
+				// Stale hop: the hop target is strictly behind the current running version,
+				// meaning the cluster has already advanced past it. This happens when the
+				// operator is interrupted after a hop completes but before the annotation is
+				// cleared (e.g. crash/restart). Without this guard the operator re-enters
+				// multiHopInProgress, sets spec.version to the stale target, and
+				// continuously patches Deployments to run an older image — perpetual loop.
+				// Note: we use strict LessThan, not <=. When hopTarget == currentVersion
+				// the hop may have just completed but not yet been acknowledged; the
+				// existing completion path handles that case correctly in one extra cycle.
+				logger.Info("Clearing stale hop-target annotation: target is strictly behind current running version",
 					"hopTarget", hopTarget, "currentVersion", currentVersion.String())
 				r.clearCurrentHopTarget(cluster)
 				r.clearHopStartAnnotation(cluster)
