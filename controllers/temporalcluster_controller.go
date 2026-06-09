@@ -174,7 +174,7 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		hopTargetVersion, parseErr := version.NewVersionFromString(hopTarget)
 		if parseErr != nil {
 			// Unparseable hop target: annotation is corrupt, clear it.
-			logger.Info("Clearing unparseable hop-target annotation", "hopTarget", hopTarget)
+			logger.Error(parseErr, "Clearing unparseable hop-target annotation", "hopTarget", hopTarget)
 			r.clearCurrentHopTarget(cluster)
 			r.clearHopStartAnnotation(cluster)
 		} else {
