@@ -337,7 +337,13 @@ func (b *DeploymentBuilder) Update(object client.Object) error {
 		})
 	}
 
-	deployment.Spec.Replicas = b.service.Replicas
+	// Manage replicas only when the CR sets them. Leaving the field unset lets an
+	// external autoscaler (HPA / KEDA) own the count: Update() mutates the live
+	// Deployment, so skipping the assignment preserves the autoscaler's current
+	// value instead of resetting it on every reconcile. Enables frontend scale-to-zero.
+	if b.service.Replicas != nil {
+		deployment.Spec.Replicas = b.service.Replicas
+	}
 
 	deployment.Spec.Selector = &metav1.LabelSelector{
 		MatchLabels: metadata.LabelsSelector(b.instance, b.serviceName),
