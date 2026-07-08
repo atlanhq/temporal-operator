@@ -143,6 +143,21 @@ func TestDefault(t *testing.T) {
 	}
 }
 
+func TestDefaultReplicas(t *testing.T) {
+	c := &v1beta1.TemporalCluster{
+		TypeMeta:   v1beta1.TemporalClusterTypeMeta,
+		ObjectMeta: metav1.ObjectMeta{Name: "fake"},
+	}
+	c.Default()
+
+	// The frontend is intentionally left unset so an external autoscaler can own
+	// the count (enables scale-to-zero); the other services still default to 1.
+	assert.Nil(t, c.Spec.Services.Frontend.Replicas)
+	assert.Equal(t, int32(1), *c.Spec.Services.History.Replicas)
+	assert.Equal(t, int32(1), *c.Spec.Services.Matching.Replicas)
+	assert.Equal(t, int32(1), *c.Spec.Services.Worker.Replicas)
+}
+
 func TestValidateCreate(t *testing.T) {
 	tests := map[string]struct {
 		object      runtime.Object
@@ -335,6 +350,50 @@ func TestValidateCreate(t *testing.T) {
 				},
 			},
 			expectedErr: "Forbidden: Can't set JSONPatch when Spec is set on Deployment override",
+		},
+		"frontend can be scaled to zero": {
+			object: &v1beta1.TemporalCluster{
+				TypeMeta:   v1beta1.TemporalClusterTypeMeta,
+				ObjectMeta: metav1.ObjectMeta{Name: "fake"},
+				Spec: v1beta1.TemporalClusterSpec{
+					Version: version.MustNewVersionFromString("1.18.4"),
+					Services: &v1beta1.ServicesSpec{
+						Frontend: &v1beta1.ServiceSpec{Replicas: ptr.To[int32](0)},
+					},
+				},
+			},
+			wh: &webhooks.TemporalClusterWebhook{AvailableAPIs: &discovery.AvailableAPIs{}},
+		},
+		"history replicas below one is rejected": {
+			object: &v1beta1.TemporalCluster{
+				TypeMeta:   v1beta1.TemporalClusterTypeMeta,
+				ObjectMeta: metav1.ObjectMeta{Name: "fake"},
+				Spec: v1beta1.TemporalClusterSpec{
+					Version: version.MustNewVersionFromString("1.18.4"),
+					Services: &v1beta1.ServicesSpec{
+						History: &v1beta1.ServiceSpec{Replicas: ptr.To[int32](0)},
+					},
+				},
+			},
+			wh:          &webhooks.TemporalClusterWebhook{AvailableAPIs: &discovery.AvailableAPIs{}},
+			expectedErr: "spec.services.history.replicas",
+		},
+		"internal frontend replicas below one is rejected": {
+			object: &v1beta1.TemporalCluster{
+				TypeMeta:   v1beta1.TemporalClusterTypeMeta,
+				ObjectMeta: metav1.ObjectMeta{Name: "fake"},
+				Spec: v1beta1.TemporalClusterSpec{
+					Version: version.MustNewVersionFromString("1.29.4"),
+					Services: &v1beta1.ServicesSpec{
+						InternalFrontend: &v1beta1.InternalFrontendServiceSpec{
+							ServiceSpec: v1beta1.ServiceSpec{Replicas: ptr.To[int32](0)},
+							Enabled:     true,
+						},
+					},
+				},
+			},
+			wh:          &webhooks.TemporalClusterWebhook{AvailableAPIs: &discovery.AvailableAPIs{}},
+			expectedErr: "spec.services.internalFrontend.replicas",
 		},
 	}
 

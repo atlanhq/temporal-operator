@@ -85,9 +85,10 @@ func (c *TemporalCluster) Default() {
 	if c.Spec.Services.Frontend == nil {
 		c.Spec.Services.Frontend = new(ServiceSpec)
 	}
-	if c.Spec.Services.Frontend.Replicas == nil {
-		c.Spec.Services.Frontend.Replicas = ptr.To[int32](1)
-	}
+	// Intentionally do not default Frontend.Replicas: leaving it unset lets an
+	// external autoscaler (HPA/KEDA) own the count and enables frontend
+	// scale-to-zero. The deployment builder only writes Spec.Replicas when this
+	// field is set, so an unset value defers to the autoscaler.
 	if c.Spec.Services.Frontend.Port == nil {
 		c.Spec.Services.Frontend.Port = ptr.To[int32](7233)
 	}
