@@ -78,6 +78,11 @@ jobs:
 
       - name: Install Helm
         uses: azure/setup-helm@v4
+        with:
+          # Pin to the last release before the Helm 4.x OCI/GHCR push regression
+          # (helm/helm#31223, #31600): 4.x fails `helm push` to ghcr.io with
+          # `failed to perform "Tag" on destination: ... not found`.
+          version: v3.18.6
 
       - name: Generate operator chart
         run: make helm
