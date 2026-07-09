@@ -75,3 +75,16 @@ jobs:
           tags: |
             ghcr.io/atlanhq/${{ github.event.repository.name }}-bundle-${{ steps.get_lowercase_branch.outputs.lowercase_branch }}:latest
             ghcr.io/atlanhq/${{ github.event.repository.name }}-bundle-${{ steps.get_lowercase_branch.outputs.lowercase_branch }}:${{ steps.get_version.outputs.version }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Generate operator chart
+        run: make helm
+
+      - name: Package and push operator chart to GHCR (OCI)
+        run: |
+          CHART_VERSION="0.6.0-${{ steps.get_version.outputs.version }}"
+          echo "${{ secrets.ORG_PAT_GITHUB }}" | helm registry login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+          helm package charts/temporal-operator --version "$CHART_VERSION" --app-version "v$(cat VERSION)"
+          helm push "temporal-operator-${CHART_VERSION}.tgz" oci://${{ env.REGISTRY }}/atlanhq/charts
