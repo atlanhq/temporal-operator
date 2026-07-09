@@ -3354,7 +3354,7 @@ spec:
                         description: Number of desired replicas for the service. Default
                           to 1.
                         format: int32
-                        minimum: 1
+                        minimum: 0
                         type: integer
                       resources:
                         description: |-
@@ -3526,7 +3526,7 @@ spec:
                         description: Number of desired replicas for the service. Default
                           to 1.
                         format: int32
-                        minimum: 1
+                        minimum: 0
                         type: integer
                       resources:
                         description: |-
@@ -3705,7 +3705,7 @@ spec:
                         description: Number of desired replicas for the service. Default
                           to 1.
                         format: int32
-                        minimum: 1
+                        minimum: 0
                         type: integer
                       resources:
                         description: |-
@@ -3877,7 +3877,7 @@ spec:
                         description: Number of desired replicas for the service. Default
                           to 1.
                         format: int32
-                        minimum: 1
+                        minimum: 0
                         type: integer
                       resources:
                         description: |-
@@ -4114,7 +4114,7 @@ spec:
                         description: Number of desired replicas for the service. Default
                           to 1.
                         format: int32
-                        minimum: 1
+                        minimum: 0
                         type: integer
                       resources:
                         description: |-

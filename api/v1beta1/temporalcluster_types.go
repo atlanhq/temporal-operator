@@ -86,7 +86,7 @@ type ServiceSpec struct {
 	// +optional
 	HTTPPort *int32 `json:"httpPort"`
 	// Number of desired replicas for the service. Default to 1.
-	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Minimum=0
 	// +optional
 	Replicas *int32 `json:"replicas"`
 	// Compute Resources required by this service.

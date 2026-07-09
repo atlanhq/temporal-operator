@@ -410,6 +410,46 @@ func (w *TemporalClusterWebhook) validateCluster(cluster *v1beta1.TemporalCluste
 			}
 		}
 	}
+
+	// Load-bearing services must run at least one replica. The public frontend may
+	// be scaled to zero (to disable external access or defer to an autoscaler), but
+	// history, matching, worker and the internal frontend are not optional. This
+	// guards the relaxed CRD minimum (0), which otherwise applies to every service.
+	if cluster.Spec.Services != nil {
+		mustRunServices := []primitives.ServiceName{
+			primitives.HistoryService,
+			primitives.MatchingService,
+			primitives.WorkerService,
+		}
+		for _, service := range mustRunServices {
+			spec, err := cluster.Spec.Services.GetServiceSpec(service)
+			if err != nil || spec == nil {
+				continue
+			}
+			if spec.Replicas != nil && *spec.Replicas < 1 {
+				errs = append(errs,
+					field.Invalid(
+						field.NewPath("spec", "services", string(service), "replicas"),
+						*spec.Replicas,
+						"replicas must be greater than or equal to 1 for this service",
+					),
+				)
+			}
+		}
+
+		if cluster.Spec.Services.InternalFrontend.IsEnabled() &&
+			cluster.Spec.Services.InternalFrontend.Replicas != nil &&
+			*cluster.Spec.Services.InternalFrontend.Replicas < 1 {
+			errs = append(errs,
+				field.Invalid(
+					field.NewPath("spec", "services", "internalFrontend", "replicas"),
+					*cluster.Spec.Services.InternalFrontend.Replicas,
+					"replicas must be greater than or equal to 1 when internal frontend is enabled",
+				),
+			)
+		}
+	}
+
 	return warns, errs
 }
 
