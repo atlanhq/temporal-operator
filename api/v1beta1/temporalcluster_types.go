@@ -88,7 +88,7 @@ type ServiceSpec struct {
 	// Number of desired replicas for the service. Default to 1.
 	// +kubebuilder:validation:Minimum=0
 	// +optional
-	Replicas *int32 `json:"replicas"`
+	Replicas *int32 `json:"replicas,omitempty"`
 	// Compute Resources required by this service.
 	// More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
 	// +optional
