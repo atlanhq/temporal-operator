@@ -2,6 +2,8 @@ manager:
   # -- Arguments to be passed to the controller manager container.
   args:
   - --leader-elect
+  # -- Deployment update strategy for the controller manager. Empty ({}) uses the Kubernetes default (RollingUpdate).
+  strategy: {}
   # -- Security context for the controller manager container.
   containerSecurityContext:
     # -- Disallow privilege escalation for the container.

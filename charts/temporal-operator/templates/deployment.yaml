@@ -7,6 +7,10 @@ metadata:
   {{- include "temporal-operator.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.manager.replicas }}
+  {{- with .Values.manager.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   selector:
     matchLabels:
       control-plane: controller-manager
