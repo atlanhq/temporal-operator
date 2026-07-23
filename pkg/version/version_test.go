@@ -24,6 +24,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestValidateSupportedRange(t *testing.T) {
+	tests := map[string]struct {
+		version     string
+		expectError bool
+	}{
+		"1.29.4 supported":     {version: "1.29.4", expectError: false},
+		"1.30.0 supported":     {version: "1.30.0", expectError: false},
+		"1.30.6 supported":     {version: "1.30.6", expectError: false},
+		"1.31.0 not supported": {version: "1.31.0", expectError: true},
+		"below floor 1.13.0":   {version: "1.13.0", expectError: true},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(tt *testing.T) {
+			v := version.MustNewVersionFromString(test.version)
+			err := v.Validate()
+			if test.expectError {
+				assert.Error(tt, err)
+				return
+			}
+			assert.NoError(tt, err)
+		})
+	}
+}
+
 func TestUpgradeConstraint(t *testing.T) {
 	tests := map[string]struct {
 		version        *version.Version
