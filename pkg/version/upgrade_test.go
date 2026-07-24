@@ -56,6 +56,16 @@ func TestNextUpgradeHop(t *testing.T) {
 			target:      "1.29.4",
 			expectedHop: "1.29.4",
 		},
+		"single hop 1.29 to 1.30": {
+			current:     "1.29.4",
+			target:      "1.30.6",
+			expectedHop: "1.30.6",
+		},
+		"multi-hop 1.28 to 1.30 uses 1.29 registry entry": {
+			current:     "1.28.2",
+			target:      "1.30.6",
+			expectedHop: "1.29.4",
+		},
 		"current already at target minor": {
 			current:     "1.29.0",
 			target:      "1.29.4",

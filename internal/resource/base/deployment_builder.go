@@ -29,6 +29,7 @@ import (
 	"github.com/alexandrevilain/temporal-operator/internal/resource/persistence"
 	"github.com/alexandrevilain/temporal-operator/internal/resource/prometheus"
 	"github.com/alexandrevilain/temporal-operator/pkg/kubernetes"
+	"github.com/alexandrevilain/temporal-operator/pkg/version"
 	"go.temporal.io/server/common/primitives"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -120,6 +121,23 @@ func (b *DeploymentBuilder) Update(object client.Object) error {
 			Name:  "SERVICES",
 			Value: b.serviceName,
 		},
+	}
+
+	// Temporal Server >= 1.30 removed dockerize from the server image. The service
+	// to start is selected via TEMPORAL_SERVICES and the (sprig) config template is
+	// located via TEMPORAL_SERVER_CONFIG_FILE_PATH. The legacy SERVICES env var is
+	// kept above for the metrics "type" tag and pre-1.30 images.
+	if b.instance.Spec.Version.GreaterOrEqual(version.V1_30_0) {
+		envVars = append(envVars,
+			corev1.EnvVar{
+				Name:  "TEMPORAL_SERVICES",
+				Value: b.serviceName,
+			},
+			corev1.EnvVar{
+				Name:  "TEMPORAL_SERVER_CONFIG_FILE_PATH",
+				Value: "/etc/temporal/config/config_template.yaml",
+			},
+		)
 	}
 
 	datastores := b.instance.Spec.Persistence.GetDatastores()
