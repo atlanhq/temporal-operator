@@ -101,7 +101,18 @@ type TemporalClusterReconciler struct {
 	// Preflight measures disk headroom before a schema migration is allowed to
 	// run. When nil the check refuses rather than approves, so a misconfigured
 	// operator cannot silently disable the guard.
-	Preflight *preflight.Checker
+	Preflight SchemaHeadroomChecker
+}
+
+// SchemaHeadroomChecker measures whether the datastore's volume can absorb a
+// rewriting schema migration.
+//
+// This is an interface rather than the concrete checker so the reconcile
+// behaviour can be driven against a real API server without a kubelet or a
+// database to read from. The two reads are the part a test environment cannot
+// provide; the decisions taken around them are the part worth testing.
+type SchemaHeadroomChecker interface {
+	Check(ctx context.Context, cfg preflight.Config, target preflight.Target) preflight.Result
 }
 
 // The headroom check reads the kubelet's volume statistics through the API
