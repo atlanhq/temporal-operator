@@ -294,6 +294,22 @@ AuthorizationSpec
 <p>Authorization allows authorization configuration for the temporal cluster.</p>
 </td>
 </tr>
+<tr>
+<td>
+<code>versionUpgrade</code><br>
+<em>
+<a href="#temporal.io/v1beta1.VersionUpgradeSpec">
+VersionUpgradeSpec
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>VersionUpgrade configures multi-hop version upgrade behavior.
+When set, the operator can automatically walk through intermediate versions
+when the target version is more than one minor version ahead.</p>
+</td>
+</tr>
 </table>
 </td>
 </tr>
@@ -2323,6 +2339,49 @@ k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1.JSON
 </table>
 </div>
 </div>
+<h3 id="temporal.io/v1beta1.PostgresClusterRef">PostgresClusterRef
+</h3>
+<p>
+(<em>Appears on:</em>
+<a href="#temporal.io/v1beta1.SchemaPreflightSpec">SchemaPreflightSpec</a>)
+</p>
+<p>PostgresClusterRef identifies a CloudNativePG cluster.</p>
+<div class="md-typeset__scrollwrap">
+<div class="md-typeset__table">
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>namespace</code><br>
+<em>
+string
+</em>
+</td>
+<td>
+<p>Namespace the CloudNativePG cluster runs in.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>name</code><br>
+<em>
+string
+</em>
+</td>
+<td>
+<p>Name of the CloudNativePG cluster resource.</p>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
 <h3 id="temporal.io/v1beta1.PrometheusScrapeConfig">PrometheusScrapeConfig
 </h3>
 <p>
@@ -4186,6 +4245,107 @@ Defaults to 1.</p>
 </table>
 </div>
 </div>
+<h3 id="temporal.io/v1beta1.SchemaPreflightSpec">SchemaPreflightSpec
+</h3>
+<p>
+(<em>Appears on:</em>
+<a href="#temporal.io/v1beta1.TemporalPersistenceSpec">TemporalPersistenceSpec</a>)
+</p>
+<p>SchemaPreflightSpec configures the disk headroom check that runs before a
+schema migration Job is created.</p>
+<p>A rewriting ALTER TABLE builds a complete new copy of the table and its
+indexes before dropping the original, so it needs a multiple of the table&rsquo;s
+size in free space. Where the volume cannot absorb that, the migration fills
+it, and because Postgres is shared the whole tenant loses its database.</p>
+<div class="md-typeset__scrollwrap">
+<div class="md-typeset__table">
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>enabled</code><br>
+<em>
+bool
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>Enabled turns the check on. It defaults to false so the check can be
+adopted per cluster and observed before it can hold back an upgrade.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>safetyFactor</code><br>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>SafetyFactor multiplies the measured table size to give the space the
+rewrite needs. Two copies is the floor rather than the peak: WAL shares the
+same volume and the rewrite is fully WAL-logged, so the default allows for
+both.</p>
+<p>This is a string because chart and ArgoCD parameter overrides arrive as
+strings. It is parsed and range-checked, which is what distinguishes a
+deliberate value from a mistyped one.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>relations</code><br>
+<em>
+[]string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>Relations lists the tables to measure. The largest governs, because the
+migration has to fit the worst case among the tables it may rewrite.
+Defaults to the only table the 1.29 to 1.30 visibility migration rewrites.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>minTableBytes</code><br>
+<em>
+int64
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>MinTableBytes is a plausibility floor. A live table carries index and
+catalog structure even when empty, so a measurement below this means the
+query measured the wrong thing, and the check refuses rather than reading a
+small number as abundant headroom.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>postgresCluster</code><br>
+<em>
+<a href="#temporal.io/v1beta1.PostgresClusterRef">
+PostgresClusterRef
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>PostgresCluster locates the CloudNativePG cluster backing the datastore.
+Without it the check cannot find the instance to measure, and refuses.</p>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
 <h3 id="temporal.io/v1beta1.SecretKeyReference">SecretKeyReference
 </h3>
 <p>
@@ -5043,6 +5203,22 @@ AuthorizationSpec
 <p>Authorization allows authorization configuration for the temporal cluster.</p>
 </td>
 </tr>
+<tr>
+<td>
+<code>versionUpgrade</code><br>
+<em>
+<a href="#temporal.io/v1beta1.VersionUpgradeSpec">
+VersionUpgradeSpec
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>VersionUpgrade configures multi-hop version upgrade behavior.
+When set, the operator can automatically walk through intermediate versions
+when the target version is more than one minor version ahead.</p>
+</td>
+</tr>
 </tbody>
 </table>
 </div>
@@ -5604,6 +5780,20 @@ DatastoreSpec
 </tr>
 <tr>
 <td>
+<code>preflight</code><br>
+<em>
+<a href="#temporal.io/v1beta1.SchemaPreflightSpec">
+SchemaPreflightSpec
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>Preflight configures the disk headroom check that gates schema migrations.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>secondaryVisibilityStore</code><br>
 <em>
 <a href="#temporal.io/v1beta1.DatastoreSpec">
@@ -6148,6 +6338,58 @@ ObjectMetaOverride
 <td>
 <em>(Optional)</em>
 <p>Service is an optional service resource configuration for the UI.</p>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<h3 id="temporal.io/v1beta1.VersionUpgradeSpec">VersionUpgradeSpec
+</h3>
+<p>
+(<em>Appears on:</em>
+<a href="#temporal.io/v1beta1.TemporalClusterSpec">TemporalClusterSpec</a>)
+</p>
+<p>VersionUpgradeSpec configures multi-hop version upgrade behavior.
+When the target version is more than one minor version ahead, the operator
+automatically walks through intermediate versions one hop at a time.</p>
+<div class="md-typeset__scrollwrap">
+<div class="md-typeset__table">
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>stabilityDuration</code><br>
+<em>
+<a href="https://pkg.go.dev/k8s.io/apimachinery/pkg/apis/meta/v1#Duration">
+Kubernetes meta/v1.Duration
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>StabilityDuration is the time to wait after all services are Ready at an
+intermediate version before starting the next hop. Defaults to 0 (immediate).</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>intermediateVersions</code><br>
+<em>
+[]string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>IntermediateVersions optionally specifies exact versions to use for intermediate hops,
+in ascending order. If not provided, the operator uses its built-in recommended versions registry.
+Example: [&ldquo;1.26.3&rdquo;, &ldquo;1.27.4&rdquo;] for upgrading from 1.25.x to 1.28.x.</p>
 </td>
 </tr>
 </tbody>

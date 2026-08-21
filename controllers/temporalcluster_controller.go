@@ -36,6 +36,7 @@ import (
 
 	"github.com/alexandrevilain/temporal-operator/api/v1beta1"
 	"github.com/alexandrevilain/temporal-operator/internal/discovery"
+	"github.com/alexandrevilain/temporal-operator/internal/preflight"
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	istionetworkingv1beta1 "istio.io/client-go/pkg/apis/networking/v1beta1"
@@ -96,8 +97,22 @@ type TemporalClusterReconciler struct {
 	Base
 
 	AvailableAPIs *discovery.AvailableAPIs
+
+	// Preflight measures disk headroom before a schema migration is allowed to
+	// run. When nil the check refuses rather than approves, so a misconfigured
+	// operator cannot silently disable the guard.
+	Preflight *preflight.Checker
 }
 
+// The headroom check reads the kubelet's volume statistics through the API
+// server's node proxy, and locates the Postgres instance to measure. These reads
+// are uncached and on demand: the manager's cache is scoped to the namespaces it
+// reconciles, and the database runs outside them, so caching would mean watching
+// pods in another namespace on every tenant.
+//+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=nodes/proxy,verbs=get
+//+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;delete
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;delete
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;delete
@@ -133,6 +148,9 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// Check if the resource has been marked for deletion
 	if !cluster.ObjectMeta.DeletionTimestamp.IsZero() {
 		logger.Info("Deleting temporal cluster", "name", cluster.Name)
+		// Drop the headroom series so a deleted cluster does not leave a blocked
+		// gauge behind for an alert to keep firing on.
+		preflight.Forget(cluster.GetName(), cluster.GetNamespace())
 		return reconcile.Result{}, nil
 	}
 
@@ -231,6 +249,35 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		defer func() {
 			cluster.Spec.Version = targetVersion
 		}()
+	}
+
+	// Disk headroom gate: a rewriting schema migration needs a multiple of the
+	// table's size free on the volume, and where that is missing the migration
+	// fills the shared Postgres volume and takes the tenant's database down.
+	//
+	// Like the pause gate above, this does NOT return early. It holds the version
+	// transition by reconciling at the version the cluster is already running, so
+	// persistence and resources stay managed while we wait. A hold lasts until
+	// someone grows the volume, which can be hours, and the cluster must not go
+	// unreconciled for that whole time.
+	if preflightResult := r.evaluateSchemaPreflight(ctx, cluster, effectiveVersion); preflightResult.Blocked() {
+		effectiveVersion = r.getCurrentVersion(cluster)
+		cluster.Spec.Version = effectiveVersion
+		defer func() {
+			cluster.Spec.Version = targetVersion
+		}()
+
+		// No hop is in flight while we wait, so the hop clock never starts. That
+		// keeps a hold from ageing into the hop timeout, which would auto-pause the
+		// upgrade and require a human to clear it before the volume growing could
+		// take effect.
+		multiHopInProgress = false
+		r.clearCurrentHopTarget(cluster)
+		r.clearHopStartAnnotation(cluster)
+
+		r.recordSchemaPreflightBlock(cluster, preflightResult)
+	} else if !preflightResult.Skipped {
+		r.clearSchemaPreflightBlock(cluster)
 	}
 
 	if multiHopInProgress {

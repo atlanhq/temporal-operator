@@ -30,6 +30,32 @@ manager:
   nodeSelector: {}
   tolerations: []
 
+# -- Controller metrics. The manager already serves /metrics on
+# --metrics-bind-address; these settings expose and scrape it. Without them the
+# endpoint is reachable only from inside the pod, so the schema preflight gauges
+# cannot be alerted on.
+metrics:
+  # -- Expose the controller's metrics port and create a Service for it.
+  enabled: true
+  # -- Container port the manager serves metrics on. Must match
+  # --metrics-bind-address in manager.args, which defaults to :8080.
+  containerPort: 8080
+  service:
+    # -- Service port for metrics.
+    port: 8080
+  serviceMonitor:
+    # -- Create a ServiceMonitor. Requires the Prometheus Operator CRDs, which
+    # VictoriaMetrics also consumes.
+    enabled: false
+    # -- Namespace to create the ServiceMonitor in. Defaults to the release namespace.
+    namespace: ""
+    # -- Scrape interval.
+    interval: 30s
+    # -- Scrape timeout.
+    scrapeTimeout: 10s
+    # -- Additional labels, for matching a Prometheus or VMAgent selector.
+    additionalLabels: {}
+
 webhook:
   # -- Service ports settings for the webhook server.
   ports:

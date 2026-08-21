@@ -39,6 +39,15 @@ const (
 	MultiHopUpgradeInProgressReason string = "MultiHopUpgradeInProgress"
 	// MultiHopUpgradeHopStuckReason signals a hop has exceeded its timeout without completing.
 	MultiHopUpgradeHopStuckReason string = "MultiHopUpgradeHopStuck"
+	// SchemaPreflightBlockedReason signals the schema migration is being held back
+	// because the datastore's volume lacks the headroom the rewrite needs. The
+	// message carries the arithmetic. This clears on its own once the volume grows.
+	SchemaPreflightBlockedReason string = "SchemaPreflightBlocked"
+	// SchemaPreflightInputInvalidReason signals the headroom check could not obtain
+	// a measurement it trusts, so it refused. This is distinct from a shortfall:
+	// the check is blind rather than reporting a known gap, and needs attention
+	// because an unmeasured gate protects nothing.
+	SchemaPreflightInputInvalidReason string = "SchemaPreflightInputInvalid"
 )
 
 // SetTemporalClusterReconcileSuccess sets the ReconcileSuccessCondition status for a temporal cluster.

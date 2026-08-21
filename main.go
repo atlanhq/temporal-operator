@@ -43,6 +43,7 @@ import (
 	temporaliov1beta1 "github.com/alexandrevilain/temporal-operator/api/v1beta1"
 	"github.com/alexandrevilain/temporal-operator/controllers"
 	internaldiscovery "github.com/alexandrevilain/temporal-operator/internal/discovery"
+	"github.com/alexandrevilain/temporal-operator/internal/preflight"
 	"github.com/alexandrevilain/temporal-operator/webhooks"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	//+kubebuilder:scaffold:imports
@@ -113,9 +114,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The headroom check reads the kubelet and the Postgres instance directly, so
+	// it needs the REST config rather than the manager's namespace-scoped cache.
+	preflightChecker, err := preflight.NewChecker(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "unable to build the schema preflight checker")
+		os.Exit(1)
+	}
+
 	if err = (&controllers.TemporalClusterReconciler{
 		Base:          controllers.New(mgr.GetClient(), mgr.GetScheme(), mgr.GetEventRecorderFor("cluster-controller"), discoveryManager),
 		AvailableAPIs: availableAPIs,
+		Preflight:     preflightChecker,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Cluster")
 		os.Exit(1)
