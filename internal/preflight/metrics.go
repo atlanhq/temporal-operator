@@ -56,12 +56,9 @@ func init() {
 	metrics.Registry.MustRegister(blocked, inputInvalid, requiredBytes, freeBytesGauge, shortfallBytes)
 }
 
-// Publish records the outcome of a check.
-//
-// Every series is written on every reconcile, including the zero values, so a
-// gate that stops blocking visibly reports zero rather than going stale at its
-// last non-zero reading. An alert built on a metric that simply disappears
-// cannot tell recovery from a crashed controller.
+// Publish records the outcome of a check. Every series is written every
+// reconcile, zeroes included, so a gate that stops blocking reports zero rather
+// than going stale at its last non-zero reading.
 func Publish(cluster, namespace string, result Result) {
 	if result.Skipped {
 		return

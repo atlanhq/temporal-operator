@@ -106,7 +106,7 @@ func testTarget() Target {
 
 func enabledConfig(t *testing.T) Config {
 	t.Helper()
-	cfg, err := ResolveConfig(true, "3", nil, 0)
+	cfg, err := ResolveConfig("3", nil, 0)
 	require.NoError(t, err)
 	return cfg
 }
@@ -142,20 +142,6 @@ func TestCheckBlocksOnShortfall(t *testing.T) {
 	assert.True(t, result.Blocked())
 	assert.False(t, result.InputInvalid(), "a genuine shortfall is not an input failure")
 	assert.Equal(t, int64(2395787520), result.ShortfallBytes)
-}
-
-// The gate is disabled by default, and a disabled gate must not measure anything
-// or report a blocked state.
-func TestCheckSkipsWhenDisabled(t *testing.T) {
-	cfg, err := ResolveConfig(false, "3", nil, 0)
-	require.NoError(t, err)
-
-	checker := newTestChecker(nil, "", "", errors.New("must not be called"), errors.New("must not be called"))
-
-	result := checker.Check(context.Background(), cfg, testTarget())
-
-	assert.True(t, result.Skipped)
-	assert.False(t, result.Blocked())
 }
 
 // Each of these is a way the check can go blind. Every one must refuse, because
@@ -252,7 +238,7 @@ func TestCheckRefusesUnscheduledPod(t *testing.T) {
 // With several relations configured, the largest governs: the migration has to
 // fit the worst case among the tables it might rewrite.
 func TestCheckUsesLargestConfiguredRelation(t *testing.T) {
-	cfg, err := ResolveConfig(true, "2", []string{"executions_visibility", "executions"}, 0)
+	cfg, err := ResolveConfig("2", []string{"executions_visibility", "executions"}, 0)
 	require.NoError(t, err)
 
 	body := `cnpg_temporal_visibility_table_bytes{relation="executions_visibility"} 1.0e+09` + "\n" +

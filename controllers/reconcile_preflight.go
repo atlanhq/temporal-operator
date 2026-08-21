@@ -30,13 +30,9 @@ import (
 )
 
 // evaluateSchemaPreflight measures whether the datastore's volume can absorb the
-// rewriting migration that moving to target would run.
-//
-// It reports a result rather than acting on it. A blocked result means the
-// caller must hold the version transition, and the caller does that by
-// reconciling at the version the cluster is already running rather than by
-// returning: a hold lasts until someone grows the volume, and the cluster's
-// resources must keep being reconciled for that whole time.
+// rewriting migration that moving to target would run. It reports a result
+// rather than acting on it; the caller holds the version transition by
+// reconciling at the version already running, never by returning.
 func (r *TemporalClusterReconciler) evaluateSchemaPreflight(ctx context.Context, cluster *v1beta1.TemporalCluster, target *version.Version) preflight.Result {
 	logger := log.FromContext(ctx)
 
@@ -109,12 +105,9 @@ func (r *TemporalClusterReconciler) publish(cluster *v1beta1.TemporalCluster, re
 }
 
 // recordSchemaPreflightBlock sets the condition describing why the migration is
-// being held.
-//
-// The event fires only when the condition changes. The check runs on every
-// reconcile and its message carries live byte counts, so emitting each time
-// would produce thousands of distinct, un-aggregatable events per day for a
-// single held cluster.
+// held. The event fires only on transition: the message carries live byte
+// counts, so one per reconcile would be thousands of un-aggregatable events a
+// day for a single held cluster.
 func (r *TemporalClusterReconciler) recordSchemaPreflightBlock(cluster *v1beta1.TemporalCluster, result preflight.Result) {
 	reason := v1beta1.SchemaPreflightBlockedReason
 	if result.InputInvalid() {
@@ -176,7 +169,7 @@ func resolvePreflightConfig(spec *v1beta1.SchemaPreflightSpec) (preflight.Config
 		minTableBytes = *spec.MinTableBytes
 	}
 
-	return preflight.ResolveConfig(true, safetyFactor, spec.Relations, minTableBytes)
+	return preflight.ResolveConfig(safetyFactor, spec.Relations, minTableBytes)
 }
 
 // visibilitySchemaUpgradePending reports whether moving to target would run a

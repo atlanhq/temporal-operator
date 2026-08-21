@@ -16,18 +16,13 @@
 // under the License.
 
 // Package preflight decides whether a schema migration has enough disk headroom
-// to run.
+// to run. A rewriting ALTER TABLE holds a second copy of the table and its
+// indexes at once, and because Postgres is shared, filling the volume costs the
+// whole tenant its database.
 //
-// A rewriting ALTER TABLE builds a complete new copy of the table and its
-// indexes before dropping the original, so peak on-disk usage is a multiple of
-// the table's current size. When the volume cannot absorb that, the migration
-// fills it, and because Postgres is shared the whole tenant loses its database.
-// This package answers one question before the migration Job is created: does
-// the volume have room?
-//
-// Every failure mode here is biased towards refusing. An unreadable, absent or
-// implausible measurement produces a refusal, never an approval, because the
-// permissive direction is indistinguishable from success until a tenant is down.
+// Every failure mode refuses. An unreadable, absent or implausible measurement
+// never approves, because the permissive direction is indistinguishable from
+// success until a tenant is down.
 package preflight
 
 import (
@@ -80,7 +75,6 @@ const (
 
 // Config is the resolved, validated gate configuration for one cluster.
 type Config struct {
-	Enabled       bool
 	SafetyFactor  float64
 	Relations     []string
 	MinTableBytes int64
@@ -98,7 +92,6 @@ type Result struct {
 	FreeBytes      int64
 	RequiredBytes  int64
 	ShortfallBytes int64
-	SafetyFactor   float64
 
 	// Cause is set when the check could not be completed. An unset Cause with
 	// OK false means the measurement succeeded and there is genuinely not
@@ -124,9 +117,8 @@ func (r Result) InputInvalid() bool {
 // safetyFactor is a string because chart and ArgoCD parameter overrides arrive
 // as strings; parsing and range-checking one string is safer than a numeric
 // field that silently accepts an absurd value.
-func ResolveConfig(enabled bool, safetyFactor string, relations []string, minTableBytes int64) (Config, error) {
+func ResolveConfig(safetyFactor string, relations []string, minTableBytes int64) (Config, error) {
 	cfg := Config{
-		Enabled:       enabled,
 		Relations:     relations,
 		MinTableBytes: minTableBytes,
 	}
@@ -168,10 +160,9 @@ func ResolveConfig(enabled bool, safetyFactor string, relations []string, minTab
 // rewrite rebuilds every index.
 func Decide(cfg Config, relation string, tableBytes, freeBytes int64) Result {
 	result := Result{
-		Relation:     relation,
-		TableBytes:   tableBytes,
-		FreeBytes:    freeBytes,
-		SafetyFactor: cfg.SafetyFactor,
+		Relation:   relation,
+		TableBytes: tableBytes,
+		FreeBytes:  freeBytes,
 	}
 
 	switch {

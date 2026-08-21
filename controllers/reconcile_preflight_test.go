@@ -26,7 +26,6 @@ import (
 	"k8s.io/client-go/tools/record"
 
 	"github.com/alexandrevilain/temporal-operator/api/v1beta1"
-	"github.com/alexandrevilain/temporal-operator/internal/preflight"
 	"github.com/alexandrevilain/temporal-operator/pkg/version"
 )
 
@@ -163,7 +162,7 @@ func TestSchemaPreflightBlockClears(t *testing.T) {
 
 	cluster := visibilityCluster("1.30.6", "1.29.4")
 
-	r.recordSchemaPreflightBlock(cluster, preflightShortfallResult())
+	r.recordSchemaPreflightBlock(cluster, shortfallResult())
 	require.True(t, isSchemaPreflightBlocked(cluster))
 
 	r.clearSchemaPreflightBlock(cluster)
@@ -182,7 +181,7 @@ func TestSchemaPreflightEventsOnlyOnTransition(t *testing.T) {
 	cluster := visibilityCluster("1.30.6", "1.29.4")
 
 	for i := 0; i < 5; i++ {
-		r.recordSchemaPreflightBlock(cluster, preflightShortfallResult())
+		r.recordSchemaPreflightBlock(cluster, shortfallResult())
 	}
 
 	assert.Len(t, recorder.Events, 1, "the hold should announce itself once, not every reconcile")
@@ -199,7 +198,7 @@ func TestSchemaPreflightBlockLeavesVersionStatusAlone(t *testing.T) {
 	cluster.Status.Version = "1.29.4"
 
 	for i := 0; i < 5; i++ {
-		r.recordSchemaPreflightBlock(cluster, preflightShortfallResult())
+		r.recordSchemaPreflightBlock(cluster, shortfallResult())
 	}
 
 	assert.Equal(t, "1.29.4", cluster.Status.Version,
@@ -240,17 +239,4 @@ func TestHopTimeoutStillWorksAndIsNotReachedWhileHeld(t *testing.T) {
 
 func staleHopStart() string {
 	return metav1.NewTime(metav1.Now().Add(-2 * defaultHopTimeout)).UTC().Format("2006-01-02T15:04:05Z07:00")
-}
-
-// preflightShortfallResult is a genuine shortfall: measured cleanly, simply short.
-func preflightShortfallResult() preflight.Result {
-	return preflight.Result{
-		Relation:       preflight.DefaultRelation,
-		TableBytes:     1298595840,
-		FreeBytes:      1500000000,
-		RequiredBytes:  3895787520,
-		ShortfallBytes: 2395787520,
-		SafetyFactor:   3,
-		Message:        "short by 2395787520 bytes",
-	}
 }

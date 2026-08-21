@@ -50,10 +50,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// These tests run against the envtest API server started by suite_test.go, so
-// the CRD schema, the object writes and the absence or presence of the schema
-// Job are all real. Only the two measurements are substituted: a test
-// environment has no kubelet to ask and no database to read.
+// These run against a real API server, so the CRD schema, the object writes and
+// the absence or presence of the schema Job are all real. Only the two
+// measurements are stubbed: there is no kubelet to ask and no database to read.
 
 // stubChecker returns a canned result and counts how often it was consulted.
 type stubChecker struct {
@@ -73,7 +72,6 @@ func shortfallResult() preflight.Result {
 		FreeBytes:      1500000000,
 		RequiredBytes:  3895787520,
 		ShortfallBytes: 2395787520,
-		SafetyFactor:   3,
 		Message:        "rewriting executions_visibility needs 3895787520 bytes but only 1500000000 are free",
 	}
 }
@@ -85,7 +83,6 @@ func passingResult() preflight.Result {
 		TableBytes:    1298595840,
 		FreeBytes:     11798802432,
 		RequiredBytes: 3895787520,
-		SafetyFactor:  3,
 		Message:       "11798802432 bytes free covers the 3895787520 bytes the rewrite needs",
 	}
 }

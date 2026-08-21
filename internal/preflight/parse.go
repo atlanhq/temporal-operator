@@ -28,14 +28,10 @@ import (
 // of the named metric family whose labels are a superset of match, and returns
 // its value.
 //
-// The parser is deliberately hand-rolled and narrow: it reads two well-known
-// gauge families from endpoints we control. Depending on a full exposition
-// parser would promote a transitive module to a direct dependency for the sake
-// of a few lines.
-//
-// Values that cannot represent a byte count (NaN, ±Inf, negatives) are rejected
-// rather than returned, so a malformed endpoint cannot produce a requirement of
-// zero. Callers treat "not found" as a hard failure.
+// Hand-rolled to read two known gauge families without promoting a transitive
+// module to a direct dependency. Values that cannot be a byte count (NaN, ±Inf,
+// negative) are rejected rather than returned, so a malformed endpoint cannot
+// produce a requirement of zero.
 func findSample(body, family string, match map[string]string) (float64, bool) {
 	scanner := bufio.NewScanner(strings.NewReader(body))
 	// Exposition lines are short, but a large label set on a single line can

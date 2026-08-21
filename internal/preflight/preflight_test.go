@@ -25,10 +25,9 @@ import (
 )
 
 func TestResolveConfigDefaults(t *testing.T) {
-	cfg, err := ResolveConfig(true, "", nil, 0)
+	cfg, err := ResolveConfig("", nil, 0)
 	require.NoError(t, err)
 
-	assert.True(t, cfg.Enabled)
 	assert.Equal(t, float64(3), cfg.SafetyFactor)
 	assert.Equal(t, []string{DefaultRelation}, cfg.Relations)
 	assert.Equal(t, DefaultMinTableBytes, cfg.MinTableBytes)
@@ -39,7 +38,7 @@ func TestResolveConfigDefaults(t *testing.T) {
 func TestResolveConfigRejectsOutOfRangeFactors(t *testing.T) {
 	for _, factor := range []string{"30", "0", "1", "1.4", "1.5", "1.9", "6.1", "100", "-3", "three", "3,5"} {
 		t.Run(factor, func(t *testing.T) {
-			_, err := ResolveConfig(true, factor, nil, 0)
+			_, err := ResolveConfig(factor, nil, 0)
 			assert.Error(t, err, "factor %q must be rejected", factor)
 		})
 	}
@@ -48,7 +47,7 @@ func TestResolveConfigRejectsOutOfRangeFactors(t *testing.T) {
 func TestResolveConfigAcceptsInRangeFactors(t *testing.T) {
 	for _, factor := range []string{"2", "2.5", "3", "4.75", "6"} {
 		t.Run(factor, func(t *testing.T) {
-			cfg, err := ResolveConfig(true, factor, nil, 0)
+			cfg, err := ResolveConfig(factor, nil, 0)
 			require.NoError(t, err)
 			assert.GreaterOrEqual(t, cfg.SafetyFactor, MinSafetyFactor)
 			assert.LessOrEqual(t, cfg.SafetyFactor, MaxSafetyFactor)
@@ -57,7 +56,7 @@ func TestResolveConfigAcceptsInRangeFactors(t *testing.T) {
 }
 
 func TestDecide(t *testing.T) {
-	cfg, err := ResolveConfig(true, "3", nil, 0)
+	cfg, err := ResolveConfig("3", nil, 0)
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -135,7 +134,7 @@ func TestDecide(t *testing.T) {
 // requirement zero, which makes "free >= required" trivially true. The gate
 // would report healthy on every tenant while protecting none of them.
 func TestZeroTableBytesNeverApproves(t *testing.T) {
-	cfg, err := ResolveConfig(true, "3", nil, 0)
+	cfg, err := ResolveConfig("3", nil, 0)
 	require.NoError(t, err)
 
 	for _, freeBytes := range []int64{0, 1, 1 << 30, 1 << 40} {
@@ -151,7 +150,7 @@ func TestZeroTableBytesNeverApproves(t *testing.T) {
 // A genuine shortfall and a blind gate are alerted differently, so the result
 // must distinguish them.
 func TestShortfallIsNotAnInputFailure(t *testing.T) {
-	cfg, err := ResolveConfig(true, "3", nil, 0)
+	cfg, err := ResolveConfig("3", nil, 0)
 	require.NoError(t, err)
 
 	result := Decide(cfg, DefaultRelation, 1298595840, 1000)
@@ -167,9 +166,9 @@ func TestShortfallIsNotAnInputFailure(t *testing.T) {
 func TestRequiredScalesWithFactor(t *testing.T) {
 	const tableBytes int64 = 1_000_000_000
 
-	two, err := ResolveConfig(true, "2", nil, 0)
+	two, err := ResolveConfig("2", nil, 0)
 	require.NoError(t, err)
-	three, err := ResolveConfig(true, "3", nil, 0)
+	three, err := ResolveConfig("3", nil, 0)
 	require.NoError(t, err)
 
 	assert.Equal(t, int64(2_000_000_000), Decide(two, DefaultRelation, tableBytes, 0).RequiredBytes)
@@ -181,11 +180,11 @@ func TestRequiredScalesWithFactor(t *testing.T) {
 // floor, which is the same fail-open hole the floor exists to close.
 func TestResolveConfigRejectsAWeakenedFloor(t *testing.T) {
 	for _, floor := range []int64{1, 4096, DefaultMinTableBytes - 1} {
-		_, err := ResolveConfig(true, "3", nil, floor)
+		_, err := ResolveConfig("3", nil, floor)
 		assert.Error(t, err, "floor %d is below the default and must be rejected", floor)
 	}
 
-	cfg, err := ResolveConfig(true, "3", nil, DefaultMinTableBytes*4)
+	cfg, err := ResolveConfig("3", nil, DefaultMinTableBytes*4)
 	require.NoError(t, err, "raising the floor is allowed")
 	assert.Equal(t, DefaultMinTableBytes*4, cfg.MinTableBytes)
 }

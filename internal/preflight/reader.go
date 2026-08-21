@@ -33,15 +33,13 @@ import (
 )
 
 const (
-	// defaultMetricsPort is the port a CNPG instance serves its exporter on,
-	// including any custom monitoring queries.
-	defaultMetricsPort = 9187
+	// metricsPort is where a CNPG instance serves its exporter, custom monitoring
+	// queries included.
+	metricsPort = 9187
 
-	// defaultMetricFamily is what CNPG names the custom query series: the
-	// exporter joins the query name and the column name. A query named
-	// temporal_visibility_table returning a `bytes` column therefore surfaces as
-	// cnpg_temporal_visibility_table_bytes.
-	defaultMetricFamily = "cnpg_temporal_visibility_table_bytes"
+	// tableBytesFamily is how CNPG names the custom query series: the exporter
+	// joins the query name and the column name.
+	tableBytesFamily = "cnpg_temporal_visibility_table_bytes"
 
 	// freeBytesFamily is emitted by the kubelet for every mounted volume. This
 	// is the same series pvc-autoresizer reads, so the two components agree on
@@ -56,22 +54,17 @@ const (
 	defaultTimeout = 10 * time.Second
 )
 
-// Target describes the Postgres instance to measure.
+// Target locates the CNPG cluster backing the datastore.
 type Target struct {
-	// Namespace and ClusterName locate the CNPG cluster backing the datastore.
 	Namespace   string
 	ClusterName string
-	// MetricsPort and MetricFamily override the CNPG defaults when needed.
-	MetricsPort  int
-	MetricFamily string
 }
 
 // Checker reads the two measurements the gate compares.
 //
-// Both reads are deliberately uncached and on demand. The manager's cache is
-// scoped to the namespaces it reconciles, and the Postgres cluster lives outside
-// them, so a cached read would mean watching pods in another namespace on every
-// tenant. One request per reconcile costs less than a fleet-wide watch.
+// Both reads are uncached and on demand: the manager's cache is scoped to the
+// namespaces it reconciles and Postgres lives outside them, so caching would
+// mean watching pods in another namespace on every tenant.
 type Checker struct {
 	clientset kubernetes.Interface
 	// fetch retrieves a metrics endpoint body, and fetchNode retrieves a node's
@@ -131,16 +124,10 @@ func NewChecker(cfg *rest.Config) (*Checker, error) {
 	}, nil
 }
 
-// Check measures the target and applies the headroom test.
-//
-// It never returns an error for a measurement it could not take: an
-// unmeasurable target is a refusal carrying a Cause, so a transient read
-// failure cannot be mistaken by a caller for permission to proceed.
+// Check measures the target and applies the headroom test. It never returns an
+// error: an unmeasurable target is a refusal carrying a Cause, so a read failure
+// cannot be mistaken for permission to proceed.
 func (c *Checker) Check(ctx context.Context, cfg Config, target Target) Result {
-	if !cfg.Enabled {
-		return Result{Skipped: true}
-	}
-
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -171,7 +158,7 @@ func (c *Checker) Check(ctx context.Context, cfg Config, target Target) Result {
 		return result
 	}
 
-	tableBytes, relation, result := c.tableBytes(ctx, cfg, target, pod.Status.PodIP)
+	tableBytes, relation, result := c.tableBytes(ctx, cfg, pod.Status.PodIP)
 	if result.Cause != CauseNone {
 		return result
 	}
@@ -224,18 +211,8 @@ func (c *Checker) freeBytes(ctx context.Context, node, namespace, claim string) 
 // tableBytes reads the size of the largest configured relation from the CNPG
 // instance's exporter. The largest is used because the migration must fit the
 // worst case among the tables it may rewrite.
-func (c *Checker) tableBytes(ctx context.Context, cfg Config, target Target, podIP string) (int64, string, Result) {
-	family := target.MetricFamily
-	if family == "" {
-		family = defaultMetricFamily
-	}
-
-	port := target.MetricsPort
-	if port == 0 {
-		port = defaultMetricsPort
-	}
-
-	url := "http://" + net.JoinHostPort(podIP, strconv.Itoa(port)) + "/metrics"
+func (c *Checker) tableBytes(ctx context.Context, cfg Config, podIP string) (int64, string, Result) {
+	url := "http://" + net.JoinHostPort(podIP, strconv.Itoa(metricsPort)) + "/metrics"
 
 	body, err := c.fetch(ctx, url)
 	if err != nil {
@@ -252,7 +229,7 @@ func (c *Checker) tableBytes(ctx context.Context, cfg Config, target Target, pod
 	)
 
 	for _, relation := range cfg.Relations {
-		value, found := findSample(body, family, map[string]string{"relation": relation})
+		value, found := findSample(body, tableBytesFamily, map[string]string{"relation": relation})
 		if !found {
 			missing = append(missing, relation)
 			continue
@@ -274,7 +251,7 @@ func (c *Checker) tableBytes(ctx context.Context, cfg Config, target Target, pod
 			Cause: CauseAbsent,
 			Message: fmt.Sprintf(
 				"%s exposes no %s for %v; the custom monitoring query does not cover those relations, or is missing entirely",
-				url, family, missing),
+				url, tableBytesFamily, missing),
 		}
 	}
 
