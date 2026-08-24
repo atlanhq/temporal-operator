@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - main-0.22-atlan-0.1
+  # Build an image and chart from any branch on demand, so a change can be
+  # validated on a tenant before it merges. Nothing branch-specific is
+  # hardcoded here: the ref chosen when dispatching decides what gets built,
+  # and the tags are derived from it.
+  workflow_dispatch: {}
 
 env:
   REGISTRY: ghcr.io
@@ -26,8 +31,11 @@ jobs:
         run: echo "version=$(echo `git ls-remote https://github.com/atlanhq/${REPOSITORY_NAME}.git ${{ steps.get_branch.outputs.branch }} | awk '{ print $1}' | cut -c1-7`)" >> $GITHUB_OUTPUT
         id: get_version
 
+      # Slashes are replaced as well as case folded. A tag is built as
+      # <repo>-<branch>, so a branch like feat/some-change would otherwise push to
+      # a nested path rather than the intended repository.
       - name: Lowercase branch name
-        run: echo "lowercase_branch=$(echo '${{ steps.get_branch.outputs.branch }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+        run: echo "lowercase_branch=$(echo '${{ steps.get_branch.outputs.branch }}' | tr '[:upper:]' '[:lower:]' | tr '/' '-')" >> $GITHUB_OUTPUT
         id: get_lowercase_branch
 
       - uses: actions/setup-go@v5
