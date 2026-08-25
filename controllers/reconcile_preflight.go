@@ -169,7 +169,7 @@ func resolvePreflightConfig(spec *v1beta1.SchemaPreflightSpec) (preflight.Config
 		minTableBytes = *spec.MinTableBytes
 	}
 
-	return preflight.ResolveConfig(safetyFactor, spec.Relations, minTableBytes)
+	return preflight.ResolveConfig(safetyFactor, spec.Relations, minTableBytes, spec.MinFreeBytes)
 }
 
 // visibilitySchemaUpgradePending reports whether moving to target would run a

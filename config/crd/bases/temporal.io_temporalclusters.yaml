@@ -2486,6 +2486,15 @@ spec:
                             Enabled turns the check on. It defaults to false so the check can be
                             adopted per cluster and observed before it can hold back an upgrade.
                           type: boolean
+                        minFreeBytes:
+                          description: |-
+                            MinFreeBytes is an absolute headroom floor applied alongside the ratio,
+                            whichever demands more. The ratio scales with the table, so a small table
+                            permits a small margin while the rewrite still needs room for WAL and for
+                            concurrent writes. Set it to 0 to apply the ratio alone, which a tenant on a
+                            volume smaller than the default floor needs in order to pass at all.
+                          format: int64
+                          type: integer
                         minTableBytes:
                           description: |-
                             MinTableBytes is a plausibility floor. A live table carries index and

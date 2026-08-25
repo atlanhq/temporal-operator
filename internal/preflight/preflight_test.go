@@ -25,7 +25,7 @@ import (
 )
 
 func TestResolveConfigDefaults(t *testing.T) {
-	cfg, err := ResolveConfig("", nil, 0)
+	cfg, err := ResolveConfig("", nil, 0, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, float64(3), cfg.SafetyFactor)
@@ -38,7 +38,7 @@ func TestResolveConfigDefaults(t *testing.T) {
 func TestResolveConfigRejectsOutOfRangeFactors(t *testing.T) {
 	for _, factor := range []string{"30", "0", "1", "1.4", "1.5", "1.9", "6.1", "100", "-3", "three", "3,5"} {
 		t.Run(factor, func(t *testing.T) {
-			_, err := ResolveConfig(factor, nil, 0)
+			_, err := ResolveConfig(factor, nil, 0, nil)
 			assert.Error(t, err, "factor %q must be rejected", factor)
 		})
 	}
@@ -47,7 +47,7 @@ func TestResolveConfigRejectsOutOfRangeFactors(t *testing.T) {
 func TestResolveConfigAcceptsInRangeFactors(t *testing.T) {
 	for _, factor := range []string{"2", "2.5", "3", "4.75", "6"} {
 		t.Run(factor, func(t *testing.T) {
-			cfg, err := ResolveConfig(factor, nil, 0)
+			cfg, err := ResolveConfig(factor, nil, 0, nil)
 			require.NoError(t, err)
 			assert.GreaterOrEqual(t, cfg.SafetyFactor, MinSafetyFactor)
 			assert.LessOrEqual(t, cfg.SafetyFactor, MaxSafetyFactor)
@@ -56,7 +56,10 @@ func TestResolveConfigAcceptsInRangeFactors(t *testing.T) {
 }
 
 func TestDecide(t *testing.T) {
-	cfg, err := ResolveConfig("3", nil, 0)
+	// The ratio and the input guards are what these cases cover, so the absolute
+	// floor is disabled to keep it from governing every row. The floor has its own
+	// cases below.
+	cfg, err := ResolveConfig("3", nil, 0, noFloor())
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -134,7 +137,7 @@ func TestDecide(t *testing.T) {
 // requirement zero, which makes "free >= required" trivially true. The gate
 // would report healthy on every tenant while protecting none of them.
 func TestZeroTableBytesNeverApproves(t *testing.T) {
-	cfg, err := ResolveConfig("3", nil, 0)
+	cfg, err := ResolveConfig("3", nil, 0, nil)
 	require.NoError(t, err)
 
 	for _, freeBytes := range []int64{0, 1, 1 << 30, 1 << 40} {
@@ -150,7 +153,7 @@ func TestZeroTableBytesNeverApproves(t *testing.T) {
 // A genuine shortfall and a blind gate are alerted differently, so the result
 // must distinguish them.
 func TestShortfallIsNotAnInputFailure(t *testing.T) {
-	cfg, err := ResolveConfig("3", nil, 0)
+	cfg, err := ResolveConfig("3", nil, 0, nil)
 	require.NoError(t, err)
 
 	result := Decide(cfg, DefaultRelation, 1298595840, 1000)
@@ -166,9 +169,12 @@ func TestShortfallIsNotAnInputFailure(t *testing.T) {
 func TestRequiredScalesWithFactor(t *testing.T) {
 	const tableBytes int64 = 1_000_000_000
 
-	two, err := ResolveConfig("2", nil, 0)
+	// The absolute floor is disabled here so the ratio is the binding bound; at
+	// this table size the floor would otherwise govern both cases and the factor
+	// would look like it had no effect.
+	two, err := ResolveConfig("2", nil, 0, noFloor())
 	require.NoError(t, err)
-	three, err := ResolveConfig("3", nil, 0)
+	three, err := ResolveConfig("3", nil, 0, noFloor())
 	require.NoError(t, err)
 
 	assert.Equal(t, int64(2_000_000_000), Decide(two, DefaultRelation, tableBytes, 0).RequiredBytes)
@@ -180,11 +186,104 @@ func TestRequiredScalesWithFactor(t *testing.T) {
 // floor, which is the same fail-open hole the floor exists to close.
 func TestResolveConfigRejectsAWeakenedFloor(t *testing.T) {
 	for _, floor := range []int64{1, 4096, DefaultMinTableBytes - 1} {
-		_, err := ResolveConfig("3", nil, floor)
+		_, err := ResolveConfig("3", nil, floor, nil)
 		assert.Error(t, err, "floor %d is below the default and must be rejected", floor)
 	}
 
-	cfg, err := ResolveConfig("3", nil, DefaultMinTableBytes*4)
+	cfg, err := ResolveConfig("3", nil, DefaultMinTableBytes*4, nil)
 	require.NoError(t, err, "raising the floor is allowed")
 	assert.Equal(t, DefaultMinTableBytes*4, cfg.MinTableBytes)
+}
+
+func noFloor() *int64 {
+	var zero int64
+	return &zero
+}
+
+func floorOf(bytes int64) *int64 {
+	return &bytes
+}
+
+// The ratio scales with the table, so a small table buys a small margin while
+// the rewrite still needs room for WAL and for the writes arriving during it.
+// The larger of the two bounds governs, which is what makes a small table on a
+// nearly full volume block instead of passing on a proportionally tiny margin.
+func TestRequiredTakesTheLargerOfRatioAndFloor(t *testing.T) {
+	tests := map[string]struct {
+		tableBytes   int64
+		floor        *int64
+		wantRequired int64
+	}{
+		"a small table is governed by the floor": {
+			tableBytes:   1 << 30,
+			floor:        floorOf(10 << 30),
+			wantRequired: 10 << 30,
+		},
+		"a large table is governed by the ratio": {
+			tableBytes:   8 << 30,
+			floor:        floorOf(10 << 30),
+			wantRequired: 24 << 30,
+		},
+		"the bounds meet without either winning twice": {
+			tableBytes:   4 << 30,
+			floor:        floorOf(12 << 30),
+			wantRequired: 12 << 30,
+		},
+		"a zero floor leaves the ratio alone, for a volume smaller than the floor": {
+			tableBytes:   1 << 30,
+			floor:        noFloor(),
+			wantRequired: 3 << 30,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			cfg, err := ResolveConfig("3", nil, 0, tt.floor)
+			require.NoError(t, err)
+
+			result := Decide(cfg, DefaultRelation, tt.tableBytes, 0)
+
+			assert.Equal(t, tt.wantRequired, result.RequiredBytes)
+			assert.Equal(t, tt.wantRequired, result.ShortfallBytes,
+				"with nothing free the shortfall is the whole requirement")
+		})
+	}
+}
+
+// The floor is what makes the difference between blocking and approving on a
+// volume that has room in proportion to the table but not in absolute terms,
+// which is the shape the shared-volume outage took.
+func TestFloorBlocksAVolumeTheRatioWouldApprove(t *testing.T) {
+	const tableBytes int64 = 1 << 30
+	const freeBytes int64 = 4 << 30
+
+	ratioOnly, err := ResolveConfig("3", nil, 0, noFloor())
+	require.NoError(t, err)
+	assert.True(t, Decide(ratioOnly, DefaultRelation, tableBytes, freeBytes).OK,
+		"three times a 1GiB table fits in 4GiB, so the ratio alone approves")
+
+	withFloor, err := ResolveConfig("3", nil, 0, floorOf(10<<30))
+	require.NoError(t, err)
+	result := Decide(withFloor, DefaultRelation, tableBytes, freeBytes)
+
+	assert.True(t, result.Blocked(), "the absolute floor must refuse the same volume")
+	assert.False(t, result.InputInvalid(), "a floor refusal is a shortfall, not a blind gate")
+	assert.Equal(t, int64(6<<30), result.ShortfallBytes)
+}
+
+// Unset and explicitly zero mean different things: unset takes the default
+// floor, zero deliberately disables it. Collapsing them would either lose the
+// default or make it impossible to turn off.
+func TestFloorDistinguishesUnsetFromZero(t *testing.T) {
+	unset, err := ResolveConfig("3", nil, 0, nil)
+	require.NoError(t, err)
+	assert.Equal(t, DefaultMinFreeBytes, unset.MinFreeBytes)
+
+	zero, err := ResolveConfig("3", nil, 0, noFloor())
+	require.NoError(t, err)
+	assert.Zero(t, zero.MinFreeBytes)
+
+	negative := int64(-1)
+	_, err = ResolveConfig("3", nil, 0, &negative)
+	assert.Error(t, err, "a negative floor is a configuration mistake, not a disabled floor")
 }

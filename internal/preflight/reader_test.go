@@ -104,9 +104,13 @@ func testTarget() Target {
 	return Target{Namespace: testNamespace, ClusterName: testCluster}
 }
 
+// The absolute floor is disabled throughout the reader tests. They exercise what
+// gets measured and how a read failure is reported, using fixture sizes far below
+// the floor; leaving it on would make every case block on the floor alone and
+// prove nothing about the reading.
 func enabledConfig(t *testing.T) Config {
 	t.Helper()
-	cfg, err := ResolveConfig("3", nil, 0)
+	cfg, err := ResolveConfig("3", nil, 0, noFloor())
 	require.NoError(t, err)
 	return cfg
 }
@@ -238,7 +242,7 @@ func TestCheckRefusesUnscheduledPod(t *testing.T) {
 // With several relations configured, the largest governs: the migration has to
 // fit the worst case among the tables it might rewrite.
 func TestCheckUsesLargestConfiguredRelation(t *testing.T) {
-	cfg, err := ResolveConfig("2", []string{"executions_visibility", "executions"}, 0)
+	cfg, err := ResolveConfig("2", []string{"executions_visibility", "executions"}, 0, noFloor())
 	require.NoError(t, err)
 
 	body := `cnpg_temporal_visibility_table_bytes{relation="executions_visibility"} 1.0e+09` + "\n" +

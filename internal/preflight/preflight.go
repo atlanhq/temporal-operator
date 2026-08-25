@@ -52,6 +52,16 @@ const (
 	MinSafetyFactor = 2.0
 	MaxSafetyFactor = 6.0
 
+	// DefaultMinFreeBytes is an absolute headroom floor, applied alongside the
+	// ratio and independent of table size. The ratio alone scales with the table,
+	// so a small table permits a small margin, while the rewrite also needs room
+	// for WAL and for the writes still arriving during it. Ten gibibytes is the
+	// threshold the shared-volume outage was remediated at.
+	//
+	// It may be lowered, including to zero to apply the ratio alone, because a
+	// tenant on a volume smaller than the floor could otherwise never pass.
+	DefaultMinFreeBytes int64 = 10 << 30
+
 	// DefaultMinTableBytes is the plausibility floor. A live tenant's
 	// executions_visibility carries index and catalog structure even when empty,
 	// so a measurement below this means the query measured the wrong thing.
@@ -78,6 +88,7 @@ type Config struct {
 	SafetyFactor  float64
 	Relations     []string
 	MinTableBytes int64
+	MinFreeBytes  int64
 }
 
 // Result is the outcome of one check.
@@ -117,10 +128,20 @@ func (r Result) InputInvalid() bool {
 // safetyFactor is a string because chart and ArgoCD parameter overrides arrive
 // as strings; parsing and range-checking one string is safer than a numeric
 // field that silently accepts an absurd value.
-func ResolveConfig(safetyFactor string, relations []string, minTableBytes int64) (Config, error) {
+func ResolveConfig(safetyFactor string, relations []string, minTableBytes int64, minFreeBytes *int64) (Config, error) {
 	cfg := Config{
 		Relations:     relations,
 		MinTableBytes: minTableBytes,
+		MinFreeBytes:  DefaultMinFreeBytes,
+	}
+
+	// Distinguished from unset by the pointer, so an explicit zero can disable
+	// the absolute floor while an omitted field still gets the default.
+	if minFreeBytes != nil {
+		if *minFreeBytes < 0 {
+			return cfg, fmt.Errorf("minimum free bytes %d cannot be negative", *minFreeBytes)
+		}
+		cfg.MinFreeBytes = *minFreeBytes
 	}
 
 	if safetyFactor == "" {
@@ -180,19 +201,28 @@ func Decide(cfg Config, relation string, tableBytes, freeBytes int64) Result {
 		return result
 	}
 
+	// Whichever bound is larger governs. The ratio scales with the table and the
+	// floor does not, so on a small table the floor is the binding one and on a
+	// large table the ratio is.
 	result.RequiredBytes = int64(float64(tableBytes) * cfg.SafetyFactor)
+	basis := fmt.Sprintf("%d x %v", tableBytes, cfg.SafetyFactor)
+	if cfg.MinFreeBytes > result.RequiredBytes {
+		result.RequiredBytes = cfg.MinFreeBytes
+		basis = fmt.Sprintf("an absolute minimum of %d, above %d x %v", cfg.MinFreeBytes, tableBytes, cfg.SafetyFactor)
+	}
+
 	if freeBytes >= result.RequiredBytes {
 		result.OK = true
 		result.Message = fmt.Sprintf(
-			"%d bytes free covers the %d bytes the %s rewrite needs",
-			freeBytes, result.RequiredBytes, relation)
+			"%d bytes free covers the %d bytes the %s rewrite needs (%s)",
+			freeBytes, result.RequiredBytes, relation, basis)
 		return result
 	}
 
 	result.ShortfallBytes = result.RequiredBytes - freeBytes
 	result.Message = fmt.Sprintf(
-		"rewriting %s needs %d bytes (%d x %v) but only %d are free; short by %d",
-		relation, result.RequiredBytes, tableBytes, cfg.SafetyFactor, freeBytes, result.ShortfallBytes)
+		"rewriting %s needs %d bytes (%s) but only %d are free; short by %d",
+		relation, result.RequiredBytes, basis, freeBytes, result.ShortfallBytes)
 
 	return result
 }

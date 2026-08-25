@@ -4329,6 +4329,22 @@ small number as abundant headroom.</p>
 </tr>
 <tr>
 <td>
+<code>minFreeBytes</code><br>
+<em>
+int64
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>MinFreeBytes is an absolute headroom floor applied alongside the ratio,
+whichever demands more. The ratio scales with the table, so a small table
+permits a small margin while the rewrite still needs room for WAL and for
+concurrent writes. Set it to 0 to apply the ratio alone, which a tenant on a
+volume smaller than the default floor needs in order to pass at all.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>postgresCluster</code><br>
 <em>
 <a href="#temporal.io/v1beta1.PostgresClusterRef">

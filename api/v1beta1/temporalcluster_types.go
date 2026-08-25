@@ -520,6 +520,13 @@ type SchemaPreflightSpec struct {
 	// small number as abundant headroom.
 	// +optional
 	MinTableBytes *int64 `json:"minTableBytes,omitempty"`
+	// MinFreeBytes is an absolute headroom floor applied alongside the ratio,
+	// whichever demands more. The ratio scales with the table, so a small table
+	// permits a small margin while the rewrite still needs room for WAL and for
+	// concurrent writes. Set it to 0 to apply the ratio alone, which a tenant on a
+	// volume smaller than the default floor needs in order to pass at all.
+	// +optional
+	MinFreeBytes *int64 `json:"minFreeBytes,omitempty"`
 	// PostgresCluster locates the CloudNativePG cluster backing the datastore.
 	// Without it the check cannot find the instance to measure, and refuses.
 	// +optional

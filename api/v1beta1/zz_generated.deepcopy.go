@@ -1339,6 +1339,11 @@ func (in *SchemaPreflightSpec) DeepCopyInto(out *SchemaPreflightSpec) {
 		*out = new(int64)
 		**out = **in
 	}
+	if in.MinFreeBytes != nil {
+		in, out := &in.MinFreeBytes, &out.MinFreeBytes
+		*out = new(int64)
+		**out = **in
+	}
 	if in.PostgresCluster != nil {
 		in, out := &in.PostgresCluster, &out.PostgresCluster
 		*out = new(PostgresClusterRef)
