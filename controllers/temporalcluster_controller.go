@@ -287,7 +287,11 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		r.clearHopStartAnnotation(cluster)
 
 		r.recordSchemaPreflightBlock(cluster, preflightResult)
-	} else if !preflightResult.Skipped {
+	} else {
+		// Cleared on every non-blocking outcome, the skipped ones included. The
+		// migration Job reads this condition to decide whether it is held, so a
+		// hold left behind after the gate is turned off would keep skipping the
+		// migration with nothing left to report why.
 		r.clearSchemaPreflightBlock(cluster)
 	}
 

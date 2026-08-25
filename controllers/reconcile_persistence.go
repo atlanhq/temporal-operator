@@ -108,6 +108,25 @@ func getDatabaseScriptCommand(script string) []string {
 }
 
 // reconcilePersistence tries to reconcile the cluster persistence.
+// heldByPreflight reports whether the headroom gate is holding schema migrations
+// for this cluster.
+//
+// The gate also reconciles at the version already running, which keeps pods off
+// the new version, but that alone does not reach these predicates: they compare
+// the recorded schema version against spec.Version, so when the cluster already
+// runs the target and only the schema is behind, the version the hold falls back
+// to is the target itself and the migration runs unheld.
+//
+// It holds the default and visibility stores, the two databases on the Postgres
+// cluster the gate measures. Both share one volume, so the measurement covers
+// both, and holding them together keeps a version bump from half-applying and
+// leaving the two schemas on different versions once the hold clears. The
+// advanced visibility store is Elasticsearch and writes nothing to this volume,
+// so it is not held on a measurement that says nothing about it.
+func heldByPreflight(cluster *v1beta1.TemporalCluster) bool {
+	return isSchemaPreflightBlocked(cluster)
+}
+
 func (r *TemporalClusterReconciler) reconcilePersistence(ctx context.Context, cluster *v1beta1.TemporalCluster) (time.Duration, error) {
 	// First of all, ensure status fields are set.
 	r.reconcilePersistenceStatus(cluster)
@@ -184,6 +203,9 @@ func (r *TemporalClusterReconciler) reconcilePersistence(ctx context.Context, cl
 			Command: getDatabaseScriptCommand(persistence.UpdateDefaultSchemaScript),
 			Skip: func(owner runtime.Object) bool {
 				c := owner.(*v1beta1.TemporalCluster)
+				if heldByPreflight(c) {
+					return true
+				}
 				if c.Status.Persistence.DefaultStore.SchemaVersion == nil {
 					return false
 				}
@@ -201,6 +223,9 @@ func (r *TemporalClusterReconciler) reconcilePersistence(ctx context.Context, cl
 			Command: getDatabaseScriptCommand(persistence.UpdateVisibilitySchemaScript),
 			Skip: func(owner runtime.Object) bool {
 				c := owner.(*v1beta1.TemporalCluster)
+				if heldByPreflight(c) {
+					return true
+				}
 				if c.Status.Persistence.VisibilityStore.SchemaVersion == nil {
 					return false
 				}

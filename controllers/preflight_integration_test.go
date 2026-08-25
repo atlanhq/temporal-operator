@@ -273,6 +273,63 @@ func TestIntegrationHeldMigrationCreatesNoSchemaJob(t *testing.T) {
 		"a hold must never auto-pause the upgrade")
 }
 
+// The hold must not depend on the running version trailing the target. Holding
+// by lowering spec.Version reaches the migration Job only while the cluster runs
+// something older; when it already runs the target and only the schema is behind,
+// the version the hold falls back to IS the target, the Job's own predicate never
+// sees the hold, and the migration this gate exists to stop runs anyway.
+//
+// A datastore plugin change reaches this state on purpose, and so does any
+// cluster whose recorded schema version trails a version its pods already run.
+func TestIntegrationHoldSurvivesRunningVersionAtTarget(t *testing.T) {
+	ctx := context.Background()
+	cluster := createUpgradingCluster(t, ctx, "preflight-at-target", true)
+
+	// The server already runs the target; only the visibility schema is behind.
+	cluster = reload(t, ctx, "preflight-at-target")
+	cluster.Status.Version = cluster.Spec.Version.String()
+	require.NoError(t, k8sClient.Status().Update(ctx, cluster))
+
+	checker := &stubChecker{result: shortfallResult()}
+	r := newIntegrationReconciler(t, checker)
+
+	reconcileOnce(t, ctx, r, "preflight-at-target")
+
+	require.Positive(t, checker.calls, "the gate must still be consulted")
+	assert.Empty(t, schemaJobs(t, ctx, "preflight-at-target"),
+		"the migration must be held even though lowering the version cannot hold it")
+
+	held := reload(t, ctx, "preflight-at-target")
+	assert.True(t, isSchemaPreflightBlocked(held))
+	assert.Equal(t, "1.29.4", held.Status.Persistence.VisibilityStore.SchemaVersion.String(),
+		"no migration ran, so the recorded schema version must not move")
+}
+
+// Turning the gate off must release the migration. The Job reads the recorded
+// hold to decide whether it is held, so a hold left behind by a previously
+// enabled gate would keep skipping the migration with nothing reporting why.
+func TestIntegrationDisablingTheGateReleasesAHold(t *testing.T) {
+	ctx := context.Background()
+	createUpgradingCluster(t, ctx, "preflight-released", true)
+
+	r := newIntegrationReconciler(t, &stubChecker{result: shortfallResult()})
+	reconcileOnce(t, ctx, r, "preflight-released")
+	require.True(t, isSchemaPreflightBlocked(reload(t, ctx, "preflight-released")),
+		"the hold must be recorded before it can be released")
+
+	cluster := reload(t, ctx, "preflight-released")
+	disabled := false
+	cluster.Spec.Persistence.Preflight.Enabled = &disabled
+	require.NoError(t, k8sClient.Update(ctx, cluster))
+
+	reconcileOnce(t, ctx, r, "preflight-released")
+
+	assert.False(t, isSchemaPreflightBlocked(reload(t, ctx, "preflight-released")),
+		"a disabled gate must not leave a hold behind")
+	assert.NotEmpty(t, schemaJobs(t, ctx, "preflight-released"),
+		"with the gate off the migration must be free to run")
+}
+
 // A hold must not advance any version status, because downstream version logic
 // trusts those and would treat the migration as already done.
 func TestIntegrationHoldDoesNotAdvanceVersionStatus(t *testing.T) {
