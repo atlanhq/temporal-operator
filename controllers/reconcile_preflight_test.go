@@ -240,3 +240,44 @@ func TestHopTimeoutStillWorksAndIsNotReachedWhileHeld(t *testing.T) {
 func staleHopStart() string {
 	return metav1.NewTime(metav1.Now().Add(-2 * defaultHopTimeout)).UTC().Format("2006-01-02T15:04:05Z07:00")
 }
+
+// The reconcile that records a hold still succeeds: the migration is skipped, the
+// remaining resources reconcile normally, and so the success path runs and
+// rewrites the same condition the hold was recorded on. If it clears the hold, a
+// held cluster reports itself healthy and the only sign left that an upgrade is
+// stuck is a log line.
+func TestSchemaPreflightHoldSurvivesASuccessfulReconcile(t *testing.T) {
+	r := newReconciler()
+	r.Recorder = record.NewFakeRecorder(10)
+
+	cluster := visibilityCluster("1.30.6", "1.29.4")
+	r.recordSchemaPreflightBlock(cluster, shortfallResult())
+	require.True(t, isSchemaPreflightBlocked(cluster))
+
+	_, err := r.handleSuccessWithRequeue(cluster, 0)
+	require.NoError(t, err)
+
+	assert.True(t, isSchemaPreflightBlocked(cluster),
+		"a successful reconcile must not clear a hold it did not resolve")
+}
+
+// The converse: with no hold recorded, a successful reconcile must still clear the
+// error condition, or every cluster would keep the last error it ever saw.
+func TestSuccessfulReconcileStillClearsAnOrdinaryError(t *testing.T) {
+	r := newReconciler()
+	r.Recorder = record.NewFakeRecorder(10)
+
+	cluster := visibilityCluster("1.30.6", "1.29.4")
+	v1beta1.SetTemporalClusterReconcileError(cluster, metav1.ConditionTrue,
+		v1beta1.PersistenceReconciliationFailedReason, "something else failed")
+
+	_, err := r.handleSuccessWithRequeue(cluster, 0)
+	require.NoError(t, err)
+
+	for _, c := range cluster.Status.Conditions {
+		if c.Type == v1beta1.ReconcileErrorCondition {
+			assert.Equal(t, metav1.ConditionFalse, c.Status,
+				"an unrelated error must still be cleared on success")
+		}
+	}
+}

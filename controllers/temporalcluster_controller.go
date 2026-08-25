@@ -271,7 +271,9 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// persistence and resources stay managed while we wait. A hold lasts until
 	// someone grows the volume, which can be hours, and the cluster must not go
 	// unreconciled for that whole time.
+	schemaPreflightHeld := false
 	if preflightResult := r.evaluateSchemaPreflight(ctx, cluster, effectiveVersion); preflightResult.Blocked() {
+		schemaPreflightHeld = true
 		effectiveVersion = r.getCurrentVersion(cluster)
 		cluster.Spec.Version = effectiveVersion
 		defer func() {
@@ -336,7 +338,7 @@ func (r *TemporalClusterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		v1beta1.SetTemporalClusterReady(cluster, metav1.ConditionUnknown, v1beta1.ProgressingReason, "")
 	}
 
-	if requeueAfter, err := r.reconcilePersistence(ctx, cluster); err != nil || requeueAfter > 0 {
+	if requeueAfter, err := r.reconcilePersistence(ctx, cluster, schemaPreflightHeld); err != nil || requeueAfter > 0 {
 		if err != nil {
 			logger.Error(err, "Can't reconcile persistence")
 			if requeueAfter == 0 {
@@ -515,7 +517,15 @@ func (r *TemporalClusterReconciler) handleSuccess(cluster *v1beta1.TemporalClust
 
 func (r *TemporalClusterReconciler) handleSuccessWithRequeue(cluster *v1beta1.TemporalCluster, requeueAfter time.Duration) (ctrl.Result, error) {
 	v1beta1.SetTemporalClusterReconcileSuccess(cluster, metav1.ConditionTrue, v1beta1.ReconcileSuccessReason, "")
-	v1beta1.SetTemporalClusterReconcileError(cluster, metav1.ConditionFalse, v1beta1.ReconcileSuccessReason, "")
+
+	// A headroom hold has to outlive the pass that recorded it. The reconcile
+	// itself succeeded, so this runs, and clearing the error here would erase the
+	// only record on the cluster of why the migration is not progressing, leaving
+	// a held cluster indistinguishable from a healthy one.
+	if !isSchemaPreflightBlocked(cluster) {
+		v1beta1.SetTemporalClusterReconcileError(cluster, metav1.ConditionFalse, v1beta1.ReconcileSuccessReason, "")
+	}
+
 	return reconcile.Result{RequeueAfter: requeueAfter}, nil
 }
 

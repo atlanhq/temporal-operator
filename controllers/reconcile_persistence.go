@@ -123,11 +123,14 @@ func getDatabaseScriptCommand(script string) []string {
 // leaving the two schemas on different versions once the hold clears. The
 // advanced visibility store is Elasticsearch and writes nothing to this volume,
 // so it is not held on a measurement that says nothing about it.
-func heldByPreflight(cluster *v1beta1.TemporalCluster) bool {
-	return isSchemaPreflightBlocked(cluster)
-}
-
-func (r *TemporalClusterReconciler) reconcilePersistence(ctx context.Context, cluster *v1beta1.TemporalCluster) (time.Duration, error) {
+// preflightHeld is passed in rather than read back off the cluster's conditions.
+// The hold is recorded as a condition for operators to see, but a condition is
+// shared state that the end of a successful reconcile also writes, so reading it
+// here would make whether the migration is held depend on the order of two
+// unrelated writes. The two migrations that write to the measured volume are
+// held; the advanced visibility store is Elasticsearch and writes nothing to it,
+// so it is not held on a measurement that says nothing about it.
+func (r *TemporalClusterReconciler) reconcilePersistence(ctx context.Context, cluster *v1beta1.TemporalCluster, preflightHeld bool) (time.Duration, error) {
 	// First of all, ensure status fields are set.
 	r.reconcilePersistenceStatus(cluster)
 
@@ -203,7 +206,7 @@ func (r *TemporalClusterReconciler) reconcilePersistence(ctx context.Context, cl
 			Command: getDatabaseScriptCommand(persistence.UpdateDefaultSchemaScript),
 			Skip: func(owner runtime.Object) bool {
 				c := owner.(*v1beta1.TemporalCluster)
-				if heldByPreflight(c) {
+				if preflightHeld {
 					return true
 				}
 				if c.Status.Persistence.DefaultStore.SchemaVersion == nil {
@@ -223,7 +226,7 @@ func (r *TemporalClusterReconciler) reconcilePersistence(ctx context.Context, cl
 			Command: getDatabaseScriptCommand(persistence.UpdateVisibilitySchemaScript),
 			Skip: func(owner runtime.Object) bool {
 				c := owner.(*v1beta1.TemporalCluster)
-				if heldByPreflight(c) {
+				if preflightHeld {
 					return true
 				}
 				if c.Status.Persistence.VisibilityStore.SchemaVersion == nil {
