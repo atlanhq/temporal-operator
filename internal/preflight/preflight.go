@@ -81,6 +81,11 @@ const (
 	CauseBelowFloor     Cause = "MetricBelowFloor"
 	CauseFactorInvalid  Cause = "SafetyFactorInvalid"
 	CauseTargetNotFound Cause = "PostgresTargetNotFound"
+	// CauseFloorUnsatisfiable means the configured absolute floor exceeds the
+	// volume itself, so no amount of free space can ever satisfy it. Reported as
+	// an input failure rather than a shortfall: a shortfall resolves when someone
+	// grows the volume, and this one never does.
+	CauseFloorUnsatisfiable Cause = "MinFreeBytesExceedsVolume"
 )
 
 // Config is the resolved, validated gate configuration for one cluster.

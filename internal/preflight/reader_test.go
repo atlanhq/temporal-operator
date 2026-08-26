@@ -73,6 +73,11 @@ func nodeBodyWithFree(bytes string) string {
 		`",persistentvolumeclaim="` + testPod + `"} ` + bytes + "\n"
 }
 
+func nodeBodyWithCapacity(bytes string) string {
+	return `kubelet_volume_stats_capacity_bytes{namespace="` + testNamespace +
+		`",persistentvolumeclaim="` + testPod + `"} ` + bytes + "\n"
+}
+
 func podBodyWithTable(bytes string) string {
 	return `cnpg_temporal_visibility_table_bytes{relation="executions_visibility"} ` + bytes + "\n"
 }
@@ -256,4 +261,40 @@ func TestCheckUsesLargestConfiguredRelation(t *testing.T) {
 	assert.Equal(t, int64(4000000000), result.TableBytes)
 	assert.Equal(t, int64(8000000000), result.RequiredBytes)
 	assert.True(t, result.OK)
+}
+
+// A floor larger than the volume can never be met. Left as a shortfall it would
+// hold the migration forever while pointing at a resize that cannot help, and it
+// would route to the self-resolving alert rather than the one that says the gate
+// cannot be trusted.
+func TestCheckRefusesAFloorLargerThanTheVolume(t *testing.T) {
+	const capacity int64 = 20 << 30
+
+	cfg, err := ResolveConfig("3", nil, 0, floorOf(capacity+1))
+	require.NoError(t, err)
+
+	body := nodeBodyWithFree("1.5e+10") + nodeBodyWithCapacity("2.147483648e+10")
+	checker := newTestChecker([]runtime.Object{primaryPodFixture()}, body, podBodyWithTable("1.0e+09"), nil, nil)
+
+	result := checker.Check(context.Background(), cfg, testTarget())
+
+	assert.True(t, result.Blocked())
+	assert.True(t, result.InputInvalid(), "an unsatisfiable floor is a configuration failure, not a shortfall")
+	assert.Equal(t, CauseFloorUnsatisfiable, result.Cause)
+}
+
+// The same floor at or below capacity is a legitimate setting and must still be
+// applied as an ordinary headroom requirement.
+func TestCheckAcceptsAFloorWithinTheVolume(t *testing.T) {
+	cfg, err := ResolveConfig("3", nil, 0, floorOf(18<<30))
+	require.NoError(t, err)
+
+	body := nodeBodyWithFree("1.5e+10") + nodeBodyWithCapacity("2.147483648e+10")
+	checker := newTestChecker([]runtime.Object{primaryPodFixture()}, body, podBodyWithTable("1.0e+09"), nil, nil)
+
+	result := checker.Check(context.Background(), cfg, testTarget())
+
+	assert.True(t, result.Blocked(), "15GiB free does not cover an 18GiB floor")
+	assert.False(t, result.InputInvalid(), "a satisfiable floor that is not met is a shortfall")
+	assert.Equal(t, CauseNone, result.Cause)
 }

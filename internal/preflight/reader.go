@@ -46,6 +46,11 @@ const (
 	// what "free" means.
 	freeBytesFamily = "kubelet_volume_stats_available_bytes"
 
+	// capacityBytesFamily sits on the same kubelet page as the free-space series,
+	// so reading it costs nothing extra and lets the check tell a volume that is
+	// short from a floor that the volume can never satisfy.
+	capacityBytesFamily = "kubelet_volume_stats_capacity_bytes"
+
 	// primaryPodSelector picks the writable instance. Replicas report the same
 	// table size, but reading the primary avoids a stale measurement on a lagging
 	// replica.
@@ -153,7 +158,7 @@ func (c *Checker) Check(ctx context.Context, cfg Config, target Target) Result {
 		}
 	}
 
-	freeBytes, result := c.freeBytes(ctx, pod.Spec.NodeName, pod.Namespace, claim)
+	freeBytes, result := c.freeBytes(ctx, cfg, pod.Spec.NodeName, pod.Namespace, claim)
 	if result.Cause != CauseNone {
 		return result
 	}
@@ -183,7 +188,7 @@ func (c *Checker) primaryPod(ctx context.Context, target Target) (*corev1.Pod, e
 
 // freeBytes reads the kubelet's view of the volume through the API server's node
 // proxy, the same path pvc-autoresizer uses.
-func (c *Checker) freeBytes(ctx context.Context, node, namespace, claim string) (int64, Result) {
+func (c *Checker) freeBytes(ctx context.Context, cfg Config, node, namespace, claim string) (int64, Result) {
 	raw, err := c.fetchNode(ctx, node)
 	if err != nil {
 		return 0, Result{
@@ -192,16 +197,30 @@ func (c *Checker) freeBytes(ctx context.Context, node, namespace, claim string) 
 		}
 	}
 
-	value, found := findSample(raw, freeBytesFamily, map[string]string{
+	labels := map[string]string{
 		"namespace":             namespace,
 		"persistentvolumeclaim": claim,
-	})
+	}
+
+	value, found := findSample(raw, freeBytesFamily, labels)
 	if !found {
 		return 0, Result{
 			Cause: CauseAbsent,
 			Message: fmt.Sprintf(
 				"node %s reports no %s for claim %s/%s; refusing rather than assuming the volume is empty",
 				node, freeBytesFamily, namespace, claim),
+		}
+	}
+
+	// A floor larger than the volume can never be met, so the check would hold the
+	// migration forever while reporting a shortfall that no resize can close.
+	// Caught here, where the volume's real size is already in hand.
+	if capacity, ok := findSample(raw, capacityBytesFamily, labels); ok && cfg.MinFreeBytes > int64(capacity) {
+		return 0, Result{
+			Cause: CauseFloorUnsatisfiable,
+			Message: fmt.Sprintf(
+				"the configured minimum of %d free bytes exceeds the %d byte capacity of %s/%s, so it can never be satisfied",
+				cfg.MinFreeBytes, int64(capacity), namespace, claim),
 		}
 	}
 
