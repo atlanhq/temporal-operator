@@ -56,7 +56,22 @@ const (
 	// replica.
 	primaryPodSelector = "cnpg.io/cluster=%s,cnpg.io/instanceRole=primary"
 
-	defaultTimeout = 10 * time.Second
+	// Each read gets its own budget rather than sharing one. A single budget
+	// across all three means a slow apiserver spends the whole allowance before
+	// the measurements are attempted, and the check then refuses a tenant that
+	// has ample room. The node read is the most generous because it returns the
+	// whole kubelet page.
+	listTimeout        = 5 * time.Second
+	nodeMetricsTimeout = 20 * time.Second
+	podMetricsTimeout  = 10 * time.Second
+
+	// maxMetricsBytes bounds each metrics body. Both endpoints are read into
+	// memory, and the operator reconciles everything else under the same memory
+	// limit, so an unbounded response is an operator-wide outage rather than a
+	// failed check. A body at the limit is refused rather than truncated: a
+	// truncated exposition parses as a missing series, which reads as "no
+	// measurement" instead of "the response was too large".
+	maxMetricsBytes = 32 << 20
 )
 
 // Target locates the CNPG cluster backing the datastore.
@@ -77,7 +92,6 @@ type Checker struct {
 	// drive the full check, including each refusal path, without a cluster.
 	fetch     func(ctx context.Context, url string) (string, error)
 	fetchNode func(ctx context.Context, node string) (string, error)
-	timeout   time.Duration
 }
 
 // NewChecker builds a Checker from the manager's REST configuration.
@@ -87,21 +101,21 @@ func NewChecker(cfg *rest.Config) (*Checker, error) {
 		return nil, fmt.Errorf("can't build clientset for the headroom check: %w", err)
 	}
 
-	client := &http.Client{Timeout: defaultTimeout}
+	client := &http.Client{Timeout: podMetricsTimeout}
 
 	return &Checker{
 		clientset: clientset,
-		timeout:   defaultTimeout,
 		fetchNode: func(ctx context.Context, node string) (string, error) {
-			raw, err := clientset.CoreV1().RESTClient().
+			stream, err := clientset.CoreV1().RESTClient().
 				Get().
 				AbsPath("/api/v1/nodes/" + node + "/proxy/metrics").
-				DoRaw(ctx)
+				Stream(ctx)
 			if err != nil {
 				return "", err
 			}
+			defer stream.Close()
 
-			return string(raw), nil
+			return readBounded(stream)
 		},
 		fetch: func(ctx context.Context, url string) (string, error) {
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -119,23 +133,31 @@ func NewChecker(cfg *rest.Config) (*Checker, error) {
 				return "", fmt.Errorf("metrics endpoint returned %s", resp.Status)
 			}
 
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return "", err
-			}
-
-			return string(body), nil
+			return readBounded(resp.Body)
 		},
 	}, nil
+}
+
+// readBounded reads at most maxMetricsBytes and refuses anything larger, so a
+// pathological response cannot exhaust the operator's memory.
+func readBounded(r io.Reader) (string, error) {
+	// One byte over the limit distinguishes "exactly at the limit" from "longer
+	// than the limit", which a plain LimitReader cannot.
+	body, err := io.ReadAll(io.LimitReader(r, maxMetricsBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(body) > maxMetricsBytes {
+		return "", fmt.Errorf("metrics body exceeds %d bytes", maxMetricsBytes)
+	}
+
+	return string(body), nil
 }
 
 // Check measures the target and applies the headroom test. It never returns an
 // error: an unmeasurable target is a refusal carrying a Cause, so a read failure
 // cannot be mistaken for permission to proceed.
 func (c *Checker) Check(ctx context.Context, cfg Config, target Target) Result {
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
-
 	pod, err := c.primaryPod(ctx, target)
 	if err != nil {
 		return Result{
@@ -173,6 +195,9 @@ func (c *Checker) Check(ctx context.Context, cfg Config, target Target) Result {
 
 // primaryPod finds the writable instance of the CNPG cluster.
 func (c *Checker) primaryPod(ctx context.Context, target Target) (*corev1.Pod, error) {
+	ctx, cancel := context.WithTimeout(ctx, listTimeout)
+	defer cancel()
+
 	pods, err := c.clientset.CoreV1().Pods(target.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: fmt.Sprintf(primaryPodSelector, target.ClusterName),
 	})
@@ -188,7 +213,18 @@ func (c *Checker) primaryPod(ctx context.Context, target Target) (*corev1.Pod, e
 
 // freeBytes reads the kubelet's view of the volume through the API server's node
 // proxy, the same path pvc-autoresizer uses.
+//
+// The kubelet recomputes volume statistics on its own interval, so this figure
+// trails the filesystem by up to that interval. The lag only ever delays an
+// approval: a volume that has just grown still reads at its old size for a while,
+// so the check keeps holding until the kubelet catches up. It cannot approve on a
+// free-space figure larger than reality, which is the direction that would
+// matter. Reading df from inside the instance would be fresher but would measure
+// a different thing from what the resizer acts on.
 func (c *Checker) freeBytes(ctx context.Context, cfg Config, node, namespace, claim string) (int64, Result) {
+	ctx, cancel := context.WithTimeout(ctx, nodeMetricsTimeout)
+	defer cancel()
+
 	raw, err := c.fetchNode(ctx, node)
 	if err != nil {
 		return 0, Result{
@@ -231,6 +267,9 @@ func (c *Checker) freeBytes(ctx context.Context, cfg Config, node, namespace, cl
 // instance's exporter. The largest is used because the migration must fit the
 // worst case among the tables it may rewrite.
 func (c *Checker) tableBytes(ctx context.Context, cfg Config, podIP string) (int64, string, Result) {
+	ctx, cancel := context.WithTimeout(ctx, podMetricsTimeout)
+	defer cancel()
+
 	url := "http://" + net.JoinHostPort(podIP, strconv.Itoa(metricsPort)) + "/metrics"
 
 	body, err := c.fetch(ctx, url)

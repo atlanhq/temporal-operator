@@ -20,8 +20,8 @@ package preflight
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -89,7 +89,7 @@ func newTestChecker(objects []runtime.Object, nodeBody, podBody string, nodeErr,
 
 	return &Checker{
 		clientset: clientset,
-		timeout:   5 * time.Second,
+
 		fetchNode: func(context.Context, string) (string, error) {
 			if nodeErr != nil {
 				return "", nodeErr
@@ -297,4 +297,38 @@ func TestCheckAcceptsAFloorWithinTheVolume(t *testing.T) {
 	assert.True(t, result.Blocked(), "15GiB free does not cover an 18GiB floor")
 	assert.False(t, result.InputInvalid(), "a satisfiable floor that is not met is a shortfall")
 	assert.Equal(t, CauseNone, result.Cause)
+}
+
+// endlessReader never reaches EOF, standing in for a metrics endpoint that
+// streams without bound.
+type endlessReader struct{}
+
+func (endlessReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'x'
+	}
+
+	return len(p), nil
+}
+
+// Both metrics bodies are read into memory, and the operator reconciles
+// everything else under the same memory limit, so an unbounded response would be
+// an operator-wide outage rather than one failed check.
+func TestReadBoundedRefusesAnOversizedBody(t *testing.T) {
+	_, err := readBounded(endlessReader{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds")
+}
+
+// The refusal must not come at the cost of ordinary bodies, and it must return
+// them whole: a silently truncated exposition parses as a missing series, which
+// the gate would report as "no measurement" rather than "response too large".
+func TestReadBoundedReturnsANormalBodyWhole(t *testing.T) {
+	body := "cnpg_temporal_visibility_table_bytes{relation=\"executions_visibility\"} 1.0e+09\n"
+
+	got, err := readBounded(strings.NewReader(body))
+
+	require.NoError(t, err)
+	assert.Equal(t, body, got)
 }
