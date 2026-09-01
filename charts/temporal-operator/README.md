@@ -43,14 +43,12 @@ helm install [RELEASE_NAME] temporal-operator/temporal-operator
 | manager.serviceAccount | object | `{"annotations":{}}` | Service account settings for the controller manager container. |
 | manager.strategy | object | `{}` | Deployment update strategy for the controller manager. Empty ({}) uses the Kubernetes default (RollingUpdate). |
 | manager.tolerations | list | `[]` |  |
-| metrics | object | `{"containerPort":8080,"enabled":true,"service":{"port":8080},"serviceMonitor":{"additionalLabels":{},"enabled":false,"interval":"30s","namespace":"","scrapeTimeout":"10s"}}` | metrics-bind-address; these settings expose and scrape it. Without them the endpoint is reachable only from inside the pod, so the schema preflight gauges cannot be alerted on. |
+| metrics | object | `{"containerPort":8080,"enabled":true,"service":{"port":8080},"serviceMonitor":{"enabled":false,"interval":"30s","scrapeTimeout":"10s"}}` | metrics-bind-address; these settings expose and scrape it. Without them the endpoint is reachable only from inside the pod, so the schema preflight gauges cannot be alerted on. |
 | metrics.containerPort | int | `8080` | metrics-bind-address in manager.args, which defaults to :8080. |
 | metrics.enabled | bool | `true` | Expose the controller's metrics port and create a Service for it. |
 | metrics.service.port | int | `8080` | Service port for metrics. |
-| metrics.serviceMonitor.additionalLabels | object | `{}` | Additional labels, for matching a Prometheus or VMAgent selector. |
 | metrics.serviceMonitor.enabled | bool | `false` | Create a ServiceMonitor. Requires the Prometheus Operator CRDs, which VictoriaMetrics also consumes. |
 | metrics.serviceMonitor.interval | string | `"30s"` | Scrape interval. |
-| metrics.serviceMonitor.namespace | string | `""` | Namespace to create the ServiceMonitor in. Defaults to the release namespace. |
 | metrics.serviceMonitor.scrapeTimeout | string | `"10s"` | Scrape timeout. |
 | webhook.certManager | object | `{"certificate":{"enabled":true,"issuerRef":{},"useCustomIssuer":false}}` | Certificate manager settings for the webhook server. |
 | webhook.certManager.certificate | object | `{"enabled":true,"issuerRef":{},"useCustomIssuer":false}` | Webhook certificate configuration using cert-manager.  |

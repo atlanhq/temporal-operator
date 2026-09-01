@@ -47,14 +47,10 @@ metrics:
     # -- Create a ServiceMonitor. Requires the Prometheus Operator CRDs, which
     # VictoriaMetrics also consumes.
     enabled: false
-    # -- Namespace to create the ServiceMonitor in. Defaults to the release namespace.
-    namespace: ""
     # -- Scrape interval.
     interval: 30s
     # -- Scrape timeout.
     scrapeTimeout: 10s
-    # -- Additional labels, for matching a Prometheus or VMAgent selector.
-    additionalLabels: {}
 
 webhook:
   # -- Service ports settings for the webhook server.
