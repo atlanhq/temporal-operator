@@ -43,6 +43,11 @@ spec:
           containerPort: 9443
           {{- end }}
           protocol: TCP
+        {{- if .Values.metrics.enabled }}
+        - name: metrics
+          containerPort: {{ .Values.metrics.containerPort }}
+          protocol: TCP
+        {{- end }}
         readinessProbe:
           httpGet:
             path: /readyz

@@ -1,0 +1,27 @@
+{{- if and .Values.metrics.enabled .Values.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "temporal-operator.fullname" . }}-metrics
+  labels:
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: temporal-operator
+  {{- include "temporal-operator.labels" . | nindent 4 }}
+spec:
+  endpoints:
+  - port: metrics
+    path: /metrics
+    {{- with .Values.metrics.serviceMonitor.interval }}
+    interval: {{ . }}
+    {{- end }}
+    {{- with .Values.metrics.serviceMonitor.scrapeTimeout }}
+    scrapeTimeout: {{ . }}
+    {{- end }}
+  namespaceSelector:
+    matchNames:
+    - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: metrics
+    {{- include "temporal-operator.selectorLabels" . | nindent 6 }}
+{{- end }}

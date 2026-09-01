@@ -485,12 +485,71 @@ func (s *DatastoreSpec) GetPasswordEnvVarName() string {
 	return fmt.Sprintf("TEMPORAL_%s_DATASTORE_PASSWORD", storeName)
 }
 
+// SchemaPreflightSpec configures the disk headroom check that runs before a
+// schema migration Job is created.
+//
+// A rewriting ALTER TABLE builds a complete new copy of the table and its
+// indexes before dropping the original, so it needs a multiple of the table's
+// size in free space. Where the volume cannot absorb that, the migration fills
+// it, and because Postgres is shared the whole tenant loses its database.
+type SchemaPreflightSpec struct {
+	// Enabled turns the check on. It defaults to false so the check can be
+	// adopted per cluster and observed before it can hold back an upgrade.
+	// +optional
+	//+kubebuilder:default:=false
+	Enabled *bool `json:"enabled,omitempty"`
+	// SafetyFactor multiplies the measured table size to give the space the
+	// rewrite needs. Two copies is the floor rather than the peak: WAL shares the
+	// same volume and the rewrite is fully WAL-logged, so the default allows for
+	// both.
+	//
+	// This is a string because chart and ArgoCD parameter overrides arrive as
+	// strings. It is parsed and range-checked, which is what distinguishes a
+	// deliberate value from a mistyped one.
+	// +optional
+	//+kubebuilder:default:="3"
+	SafetyFactor *string `json:"safetyFactor,omitempty"`
+	// Relations lists the tables to measure. The largest governs, because the
+	// migration has to fit the worst case among the tables it may rewrite.
+	// Defaults to the only table the 1.29 to 1.30 visibility migration rewrites.
+	// +optional
+	Relations []string `json:"relations,omitempty"`
+	// MinTableBytes is a plausibility floor. A live table carries index and
+	// catalog structure even when empty, so a measurement below this means the
+	// query measured the wrong thing, and the check refuses rather than reading a
+	// small number as abundant headroom.
+	// +optional
+	MinTableBytes *int64 `json:"minTableBytes,omitempty"`
+	// MinFreeBytes is an absolute headroom floor applied alongside the ratio,
+	// whichever demands more. The ratio scales with the table, so a small table
+	// permits a small margin while the rewrite still needs room for WAL and for
+	// concurrent writes. Set it to 0 to apply the ratio alone, which a tenant on a
+	// volume smaller than the default floor needs in order to pass at all.
+	// +optional
+	MinFreeBytes *int64 `json:"minFreeBytes,omitempty"`
+	// PostgresCluster locates the CloudNativePG cluster backing the datastore.
+	// Without it the check cannot find the instance to measure, and refuses.
+	// +optional
+	PostgresCluster *PostgresClusterRef `json:"postgresCluster,omitempty"`
+}
+
+// PostgresClusterRef identifies a CloudNativePG cluster.
+type PostgresClusterRef struct {
+	// Namespace the CloudNativePG cluster runs in.
+	Namespace string `json:"namespace"`
+	// Name of the CloudNativePG cluster resource.
+	Name string `json:"name"`
+}
+
 // TemporalPersistenceSpec contains temporal persistence specifications.
 type TemporalPersistenceSpec struct {
 	// DefaultStore holds the default datastore specs.
 	DefaultStore *DatastoreSpec `json:"defaultStore"`
 	// VisibilityStore holds the visibility datastore specs.
 	VisibilityStore *DatastoreSpec `json:"visibilityStore"`
+	// Preflight configures the disk headroom check that gates schema migrations.
+	// +optional
+	Preflight *SchemaPreflightSpec `json:"preflight,omitempty"`
 	// SecondaryVisibilityStore holds the secondary visibility datastore specs.
 	// Feature only available for clusters >= 1.21.0.
 	// +optional

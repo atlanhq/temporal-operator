@@ -2477,6 +2477,68 @@ spec:
                             - enabled
                           type: object
                       type: object
+                    preflight:
+                      description: Preflight configures the disk headroom check that gates schema migrations.
+                      properties:
+                        enabled:
+                          default: false
+                          description: |-
+                            Enabled turns the check on. It defaults to false so the check can be
+                            adopted per cluster and observed before it can hold back an upgrade.
+                          type: boolean
+                        minFreeBytes:
+                          description: |-
+                            MinFreeBytes is an absolute headroom floor applied alongside the ratio,
+                            whichever demands more. The ratio scales with the table, so a small table
+                            permits a small margin while the rewrite still needs room for WAL and for
+                            concurrent writes. Set it to 0 to apply the ratio alone, which a tenant on a
+                            volume smaller than the default floor needs in order to pass at all.
+                          format: int64
+                          type: integer
+                        minTableBytes:
+                          description: |-
+                            MinTableBytes is a plausibility floor. A live table carries index and
+                            catalog structure even when empty, so a measurement below this means the
+                            query measured the wrong thing, and the check refuses rather than reading a
+                            small number as abundant headroom.
+                          format: int64
+                          type: integer
+                        postgresCluster:
+                          description: |-
+                            PostgresCluster locates the CloudNativePG cluster backing the datastore.
+                            Without it the check cannot find the instance to measure, and refuses.
+                          properties:
+                            name:
+                              description: Name of the CloudNativePG cluster resource.
+                              type: string
+                            namespace:
+                              description: Namespace the CloudNativePG cluster runs in.
+                              type: string
+                          required:
+                            - name
+                            - namespace
+                          type: object
+                        relations:
+                          description: |-
+                            Relations lists the tables to measure. The largest governs, because the
+                            migration has to fit the worst case among the tables it may rewrite.
+                            Defaults to the only table the 1.29 to 1.30 visibility migration rewrites.
+                          items:
+                            type: string
+                          type: array
+                        safetyFactor:
+                          default: "3"
+                          description: |-
+                            SafetyFactor multiplies the measured table size to give the space the
+                            rewrite needs. Two copies is the floor rather than the peak: WAL shares the
+                            same volume and the rewrite is fully WAL-logged, so the default allows for
+                            both.
+
+                            This is a string because chart and ArgoCD parameter overrides arrive as
+                            strings. It is parsed and range-checked, which is what distinguishes a
+                            deliberate value from a mistyped one.
+                          type: string
+                      type: object
                     secondaryVisibilityStore:
                       description: |-
                         SecondaryVisibilityStore holds the secondary visibility datastore specs.

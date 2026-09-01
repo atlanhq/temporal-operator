@@ -1,6 +1,6 @@
 # Temporal Operator Helm Chart
 
-![Version: 0.6.0](https://img.shields.io/badge/Version-0.6.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: v0.20.0](https://img.shields.io/badge/AppVersion-v0.20.0-informational?style=flat-square)
+![Version: 0.6.0](https://img.shields.io/badge/Version-0.6.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: v0.22.0](https://img.shields.io/badge/AppVersion-v0.22.0-informational?style=flat-square)
 
 This Helm chart deploys the Temporal Operator to manage a Temporal Cluster in a Kubernetes cluster.
 
@@ -41,7 +41,15 @@ helm install [RELEASE_NAME] temporal-operator/temporal-operator
 | manager.resources.limits | object | `{"cpu":"500m","memory":"128Mi"}` | Resources limits for the controller manager container. |
 | manager.resources.requests | object | `{"cpu":"10m","memory":"64Mi"}` | Resources requests for the controller manager container. |
 | manager.serviceAccount | object | `{"annotations":{}}` | Service account settings for the controller manager container. |
+| manager.strategy | object | `{}` | Deployment update strategy for the controller manager. Empty ({}) uses the Kubernetes default (RollingUpdate). |
 | manager.tolerations | list | `[]` |  |
+| metrics | object | `{"containerPort":8080,"enabled":true,"service":{"port":8080},"serviceMonitor":{"enabled":false,"interval":"30s","scrapeTimeout":"10s"}}` | metrics-bind-address; these settings expose and scrape it. Without them the endpoint is reachable only from inside the pod, so the schema preflight gauges cannot be alerted on. |
+| metrics.containerPort | int | `8080` | metrics-bind-address in manager.args, which defaults to :8080. |
+| metrics.enabled | bool | `true` | Expose the controller's metrics port and create a Service for it. |
+| metrics.service.port | int | `8080` | Service port for metrics. |
+| metrics.serviceMonitor.enabled | bool | `false` | Create a ServiceMonitor. Requires the Prometheus Operator CRDs, which VictoriaMetrics also consumes. |
+| metrics.serviceMonitor.interval | string | `"30s"` | Scrape interval. |
+| metrics.serviceMonitor.scrapeTimeout | string | `"10s"` | Scrape timeout. |
 | webhook.certManager | object | `{"certificate":{"enabled":true,"issuerRef":{},"useCustomIssuer":false}}` | Certificate manager settings for the webhook server. |
 | webhook.certManager.certificate | object | `{"enabled":true,"issuerRef":{},"useCustomIssuer":false}` | Webhook certificate configuration using cert-manager.  |
 | webhook.certManager.certificate.enabled | bool | `true` | Enabled defines if cert-manager should be used to manage the webhook certificate. |
