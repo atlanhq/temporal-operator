@@ -17,6 +17,33 @@ spec:
     {{- with .Values.metrics.serviceMonitor.scrapeTimeout }}
     scrapeTimeout: {{ . }}
     {{- end }}
+    # A full scrape is 498 series and there is one operator per tenant, so
+    # keeping everything costs ~328k series across the fleet. Two steps cut that
+    # to 87 per pod, ~57k fleet-wide.
+    #
+    # Keep: controller-runtime and workqueue, which the alert rules read, and the
+    # schema-preflight gauges this endpoint was exposed for. Dropped by the keep
+    # rule: go_*, process_*, rest_* and certwatcher_* -- container memory is
+    # already covered by cadvisor.
+    #
+    # Then drop histogram buckets, which are 188 of the remaining 275 series
+    # (68%): reconcile_time at 41 buckets x 2 active controllers, and
+    # workqueue_{queue,work}_duration at 13 x 4 controllers each. Nothing reads
+    # them. The _sum and _count pairs are kept, so mean latency survives; only
+    # quantiles are given up, and measured reconcile latency tops out at 3.5s
+    # against a 300s wedge alert, so there is no band between them to alert on.
+    # controller_runtime_reconcile_time_seconds_bucket already carries ~860k
+    # series in VictoriaMetrics from KEDA and the worker controller; this would
+    # have added another ~54k to the largest family in the namespace.
+    #
+    # Restoring quantiles is a one-line change: delete the second step below.
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: (controller_runtime|workqueue|temporal_operator)_.*
+      action: keep
+    - sourceLabels: [__name__]
+      regex: .*_bucket
+      action: drop
   namespaceSelector:
     matchNames:
     - {{ .Release.Namespace }}

@@ -46,7 +46,7 @@ metrics:
   serviceMonitor:
     # -- Create a ServiceMonitor. Requires the Prometheus Operator CRDs, which
     # VictoriaMetrics also consumes.
-    enabled: false
+    enabled: true
     # -- Scrape interval.
     interval: 30s
     # -- Scrape timeout.
