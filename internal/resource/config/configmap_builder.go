@@ -236,7 +236,7 @@ func (b *ConfigmapBuilder) Update(object client.Object) error {
 	archivalConfig, archivalNamespaceDefaults := b.buildArchivalConfig()
 
 	temporalCfg := config.Config{}
-	temporalCfg.Global = temporalconfig.Global{
+	temporalCfg.Global = config.Global{
 		Membership: temporalconfig.Membership{
 			MaxJoinDuration:  30 * time.Second,
 			BroadcastAddress: b.broadcastAddressPlaceholder(),
@@ -429,7 +429,7 @@ func (b *ConfigmapBuilder) Update(object client.Object) error {
 				Server: temporalconfig.ServerTLS{
 					CertFile:          path.Join(frontendMTLS.GetCertificateMountPath(), certmanager.TLSCert),
 					KeyFile:           path.Join(frontendMTLS.GetCertificateMountPath(), certmanager.TLSKey),
-					RequireClientAuth: true,
+					RequireClientAuth: frontendMTLS.ClientAuthRequired(),
 					ClientCAFiles: []string{
 						internodeIntermediateCAFilePath,
 						frontendIntermediateCAFilePath,

@@ -35,7 +35,7 @@ type FrontendClientCertificateBuilder struct {
 func NewFrontendClientCertificateBuilder(instance *v1beta1.TemporalCluster, scheme *runtime.Scheme) *FrontendClientCertificateBuilder {
 	return &FrontendClientCertificateBuilder{
 		instance:                                instance,
-		GenericFrontendClientCertificateBuilder: certmanager.NewGenericFrontendClientCertificateBuilder(instance, scheme, "admintools"),
+		GenericFrontendClientCertificateBuilder: certmanager.NewGenericFrontendClientCertificateBuilder(instance, scheme, "admintools", v1beta1.FrontendCertificateAuthority),
 	}
 }
 
@@ -43,5 +43,6 @@ func (b *FrontendClientCertificateBuilder) Enabled() bool {
 	return b.instance.Spec.AdminTools != nil &&
 		b.instance.Spec.AdminTools.Enabled &&
 		b.instance.MTLSWithCertManagerEnabled() &&
-		b.instance.Spec.MTLS.FrontendEnabled()
+		b.instance.Spec.MTLS.FrontendEnabled() &&
+		!(b.instance.Spec.Services != nil && b.instance.Spec.Services.InternalFrontend.IsEnabled())
 }

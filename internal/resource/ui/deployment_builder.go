@@ -112,7 +112,7 @@ func (b *DeploymentBuilder) Update(object client.Object) error {
 			},
 		)
 
-		env = append(env, certmanager.GetTLSEnvironmentVariables(b.instance, "TEMPORAL", uiCertsMountPath)...)
+		env = append(env, certmanager.GetTLSEnvironmentVariables("TEMPORAL", uiCertsMountPath, b.instance.Spec.MTLS.Frontend.ServerName(b.instance))...)
 	}
 
 	deployment.Spec.Replicas = b.instance.Spec.UI.Replicas

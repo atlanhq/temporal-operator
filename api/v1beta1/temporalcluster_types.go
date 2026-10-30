@@ -18,6 +18,7 @@
 package v1beta1
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -677,6 +678,15 @@ type FrontendMTLSSpec struct {
 	// The DNS names specified here will be added to the TLS certificate for secure communication.
 	// +nullable
 	ExtraDNSNames []string `json:"extraDnsNames,omitempty"`
+	// RequireClientAuth defines if the frontend requires a client certificate. Defaults to true.
+	// Set it to false to serve TLS to clients that authenticate with a token instead.
+	// +optional
+	RequireClientAuth *bool `json:"requireClientAuth,omitempty"`
+}
+
+// ClientAuthRequired returns whether the frontend requires a client certificate.
+func (f FrontendMTLSSpec) ClientAuthRequired() bool {
+	return f.RequireClientAuth == nil || *f.RequireClientAuth
 }
 
 // ServerName returns frontend servername for mTLS certificates.
@@ -998,6 +1008,11 @@ type AuthorizationSpec struct {
 	// +optional
 	PermissionsClaimName string `json:"permissionsClaimName"`
 
+	// PermissionsRegex parses each value of the permissions claim. It must contain the named groups
+	// "namespace" and "role". It needs Temporal 1.30 or later.
+	// +optional
+	PermissionsRegex string `json:"permissionsRegex,omitempty"`
+
 	// Authorizer defines the authorization mechanism to be used. It can be left as an empty string to
 	// use a no-operation authorizer (noopAuthorizer), or set to "default" to use the temporal's default
 	// authorizer (defaultAuthorizer).
@@ -1267,9 +1282,32 @@ func (c *TemporalCluster) GetPublicClientAddress() string {
 	}
 	// Use internal frontend if it's enabled, otherwise use regular frontend
 	if c.Spec.Services != nil && c.Spec.Services.InternalFrontend.IsEnabled() {
-		return fmt.Sprintf("%s.%s:%d", c.ChildResourceName("internal-frontend-headless"), c.GetNamespace(), *c.Spec.Services.InternalFrontend.Port)
+		return c.InternalFrontendAddress()
 	}
 	return fmt.Sprintf("%s.%s:%d", c.ChildResourceName("frontend"), c.GetNamespace(), *c.Spec.Services.Frontend.Port)
+}
+
+// InternalFrontendAddress returns the internal frontend's address.
+func (c *TemporalCluster) InternalFrontendAddress() string {
+	return fmt.Sprintf("%s.%s:%d", c.ChildResourceName("internal-frontend-headless"), c.GetNamespace(), *c.Spec.Services.InternalFrontend.Port)
+}
+
+// ClientCertificateServerName returns the server name that a client certificate signed by the given
+// CA connects to, or an error when the cluster does not issue certificates from that CA.
+func (c *TemporalCluster) ClientCertificateServerName(authority ClientCertificateAuthority) (string, error) {
+	if c.Spec.MTLS == nil || c.Spec.MTLS.Provider != CertManagerMTLSProvider {
+		return "", errors.New("mTLS is not managed by cert-manager for the cluster, can't create a client")
+	}
+	if authority == InternodeCertificateAuthority {
+		if !c.Spec.MTLS.InternodeEnabled() {
+			return "", errors.New("internode mTLS is not enabled for the cluster, can't create an internode client")
+		}
+		return c.Spec.MTLS.Internode.ServerName(c), nil
+	}
+	if !c.Spec.MTLS.FrontendEnabled() {
+		return "", errors.New("frontend mTLS is not enabled for the cluster, can't create a frontend client")
+	}
+	return c.Spec.MTLS.Frontend.ServerName(c), nil
 }
 
 // IsReady returns true if the TemporalCluster's conditions reports it ready.

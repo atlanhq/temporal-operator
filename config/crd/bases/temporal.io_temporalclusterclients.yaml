@@ -40,6 +40,14 @@ spec:
           spec:
             description: TemporalClusterClientSpec defines the desired state of ClusterClient.
             properties:
+              certificateAuthority:
+                description: |-
+                  CertificateAuthority is the intermediate CA that signs the client's certificate: frontend (the
+                  default) for the public frontend, or internode for internal-frontend, which needs internode mTLS only.
+                enum:
+                - frontend
+                - internode
+                type: string
               clusterRef:
                 description: Reference to the temporal cluster the client will get
                   access to.
