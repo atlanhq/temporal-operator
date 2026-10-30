@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"regexp"
 	"strconv"
 
 	"github.com/alexandrevilain/temporal-operator/api/v1beta1"
@@ -125,6 +126,10 @@ func (w *TemporalClusterWebhook) validateCluster(cluster *v1beta1.TemporalCluste
 				fmt.Sprintf("Unsupported temporal version (supported: %s)", version.SupportedVersionsRange.String()),
 			),
 		)
+	}
+
+	if cluster.Spec.Authorization != nil && cluster.Spec.Authorization.PermissionsRegex != "" {
+		errs = append(errs, validatePermissionsRegex(cluster)...)
 	}
 
 	// Ensure ElasticSearch v6 is not used with cluster >= 1.18.0
@@ -517,4 +522,24 @@ func (w *TemporalClusterWebhook) SetupWebhookWithManager(mgr ctrl.Manager) error
 		WithDefaulter(w).
 		WithValidator(w).
 		Complete()
+}
+
+// validatePermissionsRegex refuses a permissions regex the cluster would ignore or fail to start with.
+func validatePermissionsRegex(cluster *v1beta1.TemporalCluster) field.ErrorList {
+	path := field.NewPath("spec", "authorization", "permissionsRegex")
+	regex := cluster.Spec.Authorization.PermissionsRegex
+	if !cluster.Spec.Version.GreaterOrEqual(version.V1_30_0) {
+		return field.ErrorList{field.Forbidden(path, "temporal cluster version < 1.30.0 doesn't support permissionsRegex")}
+	}
+	compiled, err := regexp.Compile(regex)
+	if err != nil {
+		return field.ErrorList{field.Invalid(path, regex, err.Error())}
+	}
+	var errs field.ErrorList
+	for _, group := range []string{"namespace", "role"} {
+		if compiled.SubexpIndex(group) < 0 {
+			errs = append(errs, field.Invalid(path, regex, fmt.Sprintf("must contain the named group %q", group)))
+		}
+	}
+	return errs
 }

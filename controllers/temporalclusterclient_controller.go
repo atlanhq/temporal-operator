@@ -19,7 +19,6 @@ package controllers
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/alexandrevilain/controller-tools/pkg/patch"
@@ -106,18 +105,19 @@ func (r *TemporalClusterClientReconciler) Reconcile(ctx context.Context, req ctr
 		return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
-	if !(cluster.MTLSWithCertManagerEnabled() && cluster.Spec.MTLS.FrontendEnabled()) {
-		return reconcile.Result{Requeue: false}, errors.New("mTLS for frontend not enabled using cert-manager for the cluster, can't create a client")
+	serverName, err := cluster.ClientCertificateServerName(clusterClient.Spec.CertificateAuthority)
+	if err != nil {
+		return reconcile.Result{Requeue: false}, err
 	}
 
-	clusterClient.Status.ServerName = cluster.Spec.MTLS.Frontend.ServerName(cluster)
+	clusterClient.Status.ServerName = serverName
 	if clusterClient.Status.SecretRef == nil {
 		clusterClient.Status.SecretRef = &corev1.LocalObjectReference{
 			Name: "",
 		}
 	}
 
-	builder := certmanager.NewGenericFrontendClientCertificateBuilder(cluster, r.Scheme, clusterClient.GetName())
+	builder := certmanager.NewGenericFrontendClientCertificateBuilder(cluster, r.Scheme, clusterClient.GetName(), clusterClient.Spec.CertificateAuthority)
 	certificateObject := builder.Build()
 
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, certificateObject, func() error {

@@ -39,6 +39,14 @@ spec:
           spec:
             description: TemporalClusterClientSpec defines the desired state of ClusterClient.
             properties:
+              certificateAuthority:
+                description: |-
+                  CertificateAuthority is the intermediate CA that signs the client's certificate: frontend (the
+                  default) for the public frontend, or internode for internal-frontend, which needs internode mTLS only.
+                enum:
+                - frontend
+                - internode
+                type: string
               clusterRef:
                 description: Reference to the temporal cluster the client will get
                   access to.
@@ -517,6 +525,11 @@ spec:
                     description: PermissionsClaimName is the name of the claim within
                       the JWT token that contains the user's permissions.
                     type: string
+                  permissionsRegex:
+                    description: |-
+                      PermissionsRegex parses each value of the permissions claim. It must contain the named groups
+                      "namespace" and "role". It needs Temporal 1.30 or later.
+                    type: string
                 type: object
               dynamicConfig:
                 description: DynamicConfig allows advanced configuration for the temporal
@@ -760,6 +773,11 @@ spec:
                           type: string
                         nullable: true
                         type: array
+                      requireClientAuth:
+                        description: |-
+                          RequireClientAuth defines if the frontend requires a client certificate. Defaults to true.
+                          Set it to false to serve TLS to clients that authenticate with a token instead.
+                        type: boolean
                     type: object
                   internode:
                     description: |-

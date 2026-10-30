@@ -32,7 +32,7 @@ type FrontendClientCertificateBuilder struct {
 func NewFrontendClientCertificateBuilder(instance *v1beta1.TemporalCluster, scheme *runtime.Scheme) *FrontendClientCertificateBuilder {
 	return &FrontendClientCertificateBuilder{
 		instance:                                instance,
-		GenericFrontendClientCertificateBuilder: certmanager.NewGenericFrontendClientCertificateBuilder(instance, scheme, "ui"),
+		GenericFrontendClientCertificateBuilder: certmanager.NewGenericFrontendClientCertificateBuilder(instance, scheme, "ui", v1beta1.FrontendCertificateAuthority),
 	}
 }
 

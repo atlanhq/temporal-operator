@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"path"
 
-	"github.com/alexandrevilain/temporal-operator/api/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -31,7 +30,7 @@ func addPrefix(prefix, name string) string {
 
 // GetTLSEnvironmentVariables returns needed env vars for enabling TLS connection for temporal tools.
 // To support the whole range of temporal tools, the caller should provide an envPrefix which prefixes all TLS env vars.
-func GetTLSEnvironmentVariables(instance *v1beta1.TemporalCluster, envPrefix, certsMountPath string) []corev1.EnvVar {
+func GetTLSEnvironmentVariables(envPrefix, certsMountPath, serverName string) []corev1.EnvVar {
 	return []corev1.EnvVar{
 		{
 			Name:  addPrefix(envPrefix, "TLS_CA"),
@@ -55,7 +54,7 @@ func GetTLSEnvironmentVariables(instance *v1beta1.TemporalCluster, envPrefix, ce
 		},
 		{
 			Name:  addPrefix(envPrefix, "TLS_SERVER_NAME"),
-			Value: instance.Spec.MTLS.Frontend.ServerName(instance),
+			Value: serverName,
 		},
 	}
 }

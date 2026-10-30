@@ -401,6 +401,11 @@ spec:
                     permissionsClaimName:
                       description: PermissionsClaimName is the name of the claim within the JWT token that contains the user's permissions.
                       type: string
+                    permissionsRegex:
+                      description: |-
+                        PermissionsRegex parses each value of the permissions claim. It must contain the named groups
+                        "namespace" and "role". It needs Temporal 1.30 or later.
+                      type: string
                   type: object
                 dynamicConfig:
                   description: DynamicConfig allows advanced configuration for the temporal cluster.
@@ -635,6 +640,11 @@ spec:
                             type: string
                           nullable: true
                           type: array
+                        requireClientAuth:
+                          description: |-
+                            RequireClientAuth defines if the frontend requires a client certificate. Defaults to true.
+                            Set it to false to serve TLS to clients that authenticate with a token instead.
+                          type: boolean
                       type: object
                     internode:
                       description: |-
