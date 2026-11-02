@@ -518,7 +518,7 @@ spec:
                       refreshInterval:
                         description: |-
                           RefreshInterval defines the time interval at which temporal should refresh the JWT signing keys from
-                          the specified URIs.
+                          the specified URIs. Defaults to 1 minute.
                         type: string
                     type: object
                   permissionsClaimName:
@@ -528,7 +528,7 @@ spec:
                   permissionsRegex:
                     description: |-
                       PermissionsRegex parses each value of the permissions claim. It must contain the named groups
-                      "namespace" and "role". It needs Temporal 1.30 or later.
+                      "namespace" and "role". It needs Temporal 1.29 or later and the default authorizer and claim mapper.
                     type: string
                 type: object
               dynamicConfig:
@@ -776,7 +776,8 @@ spec:
                       requireClientAuth:
                         description: |-
                           RequireClientAuth defines if the frontend requires a client certificate. Defaults to true.
-                          Set it to false to serve TLS to clients that authenticate with a token instead.
+                          Set it to false to serve TLS to clients that authenticate with a token instead. That requires
+                          spec.authorization with the default authorizer and claim mapper.
                         type: boolean
                     type: object
                   internode:

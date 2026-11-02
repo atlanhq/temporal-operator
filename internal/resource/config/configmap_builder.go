@@ -425,15 +425,18 @@ func (b *ConfigmapBuilder) Update(object client.Object) error {
 			frontendMTLS := b.instance.Spec.MTLS.Frontend
 			frontendIntermediateCAFilePath := path.Join(frontendMTLS.GetIntermediateCACertificateMountPath(), certmanager.TLSCA)
 
+			// Temporal loads every client CA file at startup, and pods mount the internode CA only with internode mTLS.
+			clientCAFiles := []string{frontendIntermediateCAFilePath}
+			if b.instance.Spec.MTLS.InternodeEnabled() {
+				clientCAFiles = []string{internodeIntermediateCAFilePath, frontendIntermediateCAFilePath}
+			}
+
 			temporalCfg.Global.TLS.Frontend = temporalconfig.GroupTLS{
 				Server: temporalconfig.ServerTLS{
 					CertFile:          path.Join(frontendMTLS.GetCertificateMountPath(), certmanager.TLSCert),
 					KeyFile:           path.Join(frontendMTLS.GetCertificateMountPath(), certmanager.TLSKey),
 					RequireClientAuth: frontendMTLS.ClientAuthRequired(),
-					ClientCAFiles: []string{
-						internodeIntermediateCAFilePath,
-						frontendIntermediateCAFilePath,
-					},
+					ClientCAFiles:     clientCAFiles,
 				},
 				Client: temporalconfig.ClientTLS{
 					ServerName:              frontendMTLS.ServerName(b.instance),

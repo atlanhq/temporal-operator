@@ -245,6 +245,12 @@ func (c *TemporalCluster) Default() {
 		}
 	}
 
+	if c.Spec.Authorization != nil {
+		if c.Spec.Authorization.JWTKeyProvider.RefreshInterval == nil {
+			c.Spec.Authorization.JWTKeyProvider.RefreshInterval = &metav1.Duration{Duration: time.Minute}
+		}
+	}
+
 	if c.Spec.Metrics.IsEnabled() {
 		if c.Spec.Metrics.Prometheus != nil {
 			if c.Spec.Metrics.Prometheus.ListenPort == nil {

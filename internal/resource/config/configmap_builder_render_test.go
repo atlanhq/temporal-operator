@@ -111,6 +111,31 @@ func TestFrontendCanServeTLSWithoutClientCertificates(t *testing.T) {
 	assert.Equal(t, true, lookup(t, global, "tls", "internode", "server", "requireClientAuth"))
 }
 
+func TestFrontendTrustsTheInternodeCAOnlyWhenItIsMounted(t *testing.T) {
+	tests := map[string]struct {
+		internode bool
+		expected  []any
+	}{
+		"internode mTLS on": {
+			internode: true,
+			expected:  []any{"/etc/temporal/config/certs/cluster/ca/ca.crt", "/etc/temporal/config/certs/client/ca/ca.crt"},
+		},
+		"internode mTLS off": {
+			internode: false,
+			expected:  []any{"/etc/temporal/config/certs/client/ca/ca.crt"},
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(tt *testing.T) {
+			cluster := renderableCluster(&v1beta1.FrontendMTLSSpec{Enabled: true, RequireClientAuth: ptr.To(false)}, nil)
+			cluster.Spec.MTLS.Internode.Enabled = test.internode
+			global := renderedGlobal(tt, cluster)
+
+			assert.Equal(tt, test.expected, lookup(tt, global, "tls", "frontend", "server", "clientCaFiles"))
+		})
+	}
+}
+
 func TestAuthorizationRendersPermissionsRegex(t *testing.T) {
 	authorization := &v1beta1.AuthorizationSpec{
 		Authorizer:           "default",
@@ -122,4 +147,17 @@ func TestAuthorizationRendersPermissionsRegex(t *testing.T) {
 
 	assert.Equal(t, authorization.PermissionsRegex, lookup(t, global, "authorization", "permissionsRegex"))
 	assert.Equal(t, "aud", lookup(t, global, "authorization", "permissionsClaimName"))
+}
+
+func TestAuthorizationRefreshesSigningKeysEveryMinuteByDefault(t *testing.T) {
+	authorization := &v1beta1.AuthorizationSpec{
+		Authorizer:  "default",
+		ClaimMapper: "default",
+		JWTKeyProvider: v1beta1.AuthorizationSpecJWTKeyProvider{
+			KeySourceURIs: []string{"https://keys.example/jwks"},
+		},
+	}
+	global := renderedGlobal(t, renderableCluster(&v1beta1.FrontendMTLSSpec{Enabled: true}, authorization))
+
+	assert.Equal(t, "1m0s", lookup(t, global, "authorization", "jwtKeyProvider", "refreshInterval"))
 }

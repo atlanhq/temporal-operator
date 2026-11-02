@@ -48,6 +48,7 @@ var (
 	V1_23_0 = MustNewVersionFromString("1.23.0") //nolint:stylecheck,revive
 	V1_24_0 = MustNewVersionFromString("1.24.0") //nolint:stylecheck,revive
 	V1_25_0 = MustNewVersionFromString("1.25.0") //nolint:stylecheck,revive
+	V1_29_0 = MustNewVersionFromString("1.29.0") //nolint:stylecheck,revive
 	// V1_30_0 marks the boundary where Temporal removed dockerize and moved config
 	// templating into the server binary (embedded sprig). See configmap_builder.
 	V1_30_0 = MustNewVersionFromString("1.30.0") //nolint:stylecheck,revive

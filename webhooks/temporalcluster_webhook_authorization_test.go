@@ -27,6 +27,7 @@ import (
 	"github.com/alexandrevilain/temporal-operator/webhooks"
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 )
 
 func clusterWithPermissionsRegex(v, regex string) *v1beta1.TemporalCluster {
@@ -34,27 +35,46 @@ func clusterWithPermissionsRegex(v, regex string) *v1beta1.TemporalCluster {
 		TypeMeta:   v1beta1.TemporalClusterTypeMeta,
 		ObjectMeta: metav1.ObjectMeta{Name: "fake"},
 		Spec: v1beta1.TemporalClusterSpec{
-			Version:       version.MustNewVersionFromString(v),
-			Authorization: &v1beta1.AuthorizationSpec{PermissionsRegex: regex},
+			Version: version.MustNewVersionFromString(v),
+			Authorization: &v1beta1.AuthorizationSpec{
+				Authorizer:       "default",
+				ClaimMapper:      "default",
+				PermissionsRegex: regex,
+			},
 		},
 	}
 }
 
 func TestValidatePermissionsRegex(t *testing.T) {
 	const valid = `^(?P<namespace>[a-z0-9-]+):(?P<role>read|write|admin)$`
+	withoutClaimMapper := clusterWithPermissionsRegex("1.30.6", valid)
+	withoutClaimMapper.Spec.Authorization.ClaimMapper = ""
+	withoutAuthorizer := clusterWithPermissionsRegex("1.30.6", valid)
+	withoutAuthorizer.Spec.Authorization.Authorizer = ""
 	tests := map[string]struct {
 		cluster     *v1beta1.TemporalCluster
 		expectedErr string
 	}{
+		"accepted on 1.29": {
+			cluster: clusterWithPermissionsRegex("1.29.0", valid),
+		},
 		"accepted on 1.30": {
 			cluster: clusterWithPermissionsRegex("1.30.6", valid),
 		},
-		"unset on 1.29 is fine": {
-			cluster: clusterWithPermissionsRegex("1.29.4", ""),
+		"unset on 1.28 is fine": {
+			cluster: clusterWithPermissionsRegex("1.28.1", ""),
 		},
-		"refused before 1.30, which ignores it": {
-			cluster:     clusterWithPermissionsRegex("1.29.4", valid),
+		"refused before 1.29, which ignores it": {
+			cluster:     clusterWithPermissionsRegex("1.28.1", valid),
 			expectedErr: "spec.authorization.permissionsRegex",
+		},
+		"refused without the default claim mapper, the only one that reads it": {
+			cluster:     withoutClaimMapper,
+			expectedErr: "spec.authorization.claimMapper",
+		},
+		"refused without the default authorizer, which ignores the claims": {
+			cluster:     withoutAuthorizer,
+			expectedErr: "spec.authorization.authorizer",
 		},
 		"refused when it does not compile": {
 			cluster:     clusterWithPermissionsRegex("1.30.6", `^(?P<namespace>[a-z`),
@@ -70,6 +90,54 @@ func TestValidatePermissionsRegex(t *testing.T) {
 		},
 	}
 	wh := &webhooks.TemporalClusterWebhook{AvailableAPIs: &discovery.AvailableAPIs{}}
+	for name, test := range tests {
+		t.Run(name, func(tt *testing.T) {
+			_, err := wh.ValidateCreate(context.Background(), test.cluster)
+			if test.expectedErr == "" {
+				assert.NoError(tt, err)
+				return
+			}
+			assert.ErrorContains(tt, err, test.expectedErr)
+		})
+	}
+}
+
+func clusterWithFrontendTLS(requireClientAuth *bool, authorization *v1beta1.AuthorizationSpec) *v1beta1.TemporalCluster {
+	return &v1beta1.TemporalCluster{
+		TypeMeta:   v1beta1.TemporalClusterTypeMeta,
+		ObjectMeta: metav1.ObjectMeta{Name: "fake"},
+		Spec: v1beta1.TemporalClusterSpec{
+			Version: version.MustNewVersionFromString("1.30.6"),
+			MTLS: &v1beta1.MTLSSpec{
+				Provider: v1beta1.CertManagerMTLSProvider,
+				Frontend: &v1beta1.FrontendMTLSSpec{Enabled: true, RequireClientAuth: requireClientAuth},
+			},
+			Authorization: authorization,
+		},
+	}
+}
+
+func TestValidateFrontendWithoutClientCertificates(t *testing.T) {
+	tests := map[string]struct {
+		cluster     *v1beta1.TemporalCluster
+		expectedErr string
+	}{
+		"client certificates required, no authorization needed": {
+			cluster: clusterWithFrontendTLS(nil, nil),
+		},
+		"refused without authorization, which makes every caller system admin": {
+			cluster:     clusterWithFrontendTLS(ptr.To(false), nil),
+			expectedErr: "spec.authorization: Required value",
+		},
+		"refused with the noop claim mapper": {
+			cluster:     clusterWithFrontendTLS(ptr.To(false), &v1beta1.AuthorizationSpec{Authorizer: "default"}),
+			expectedErr: "spec.authorization.claimMapper",
+		},
+		"accepted with the default authorizer and claim mapper, in any case": {
+			cluster: clusterWithFrontendTLS(ptr.To(false), &v1beta1.AuthorizationSpec{Authorizer: "default", ClaimMapper: "Default"}),
+		},
+	}
+	wh := &webhooks.TemporalClusterWebhook{AvailableAPIs: &discovery.AvailableAPIs{CertManager: true}}
 	for name, test := range tests {
 		t.Run(name, func(tt *testing.T) {
 			_, err := wh.ValidateCreate(context.Background(), test.cluster)

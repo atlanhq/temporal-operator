@@ -679,7 +679,8 @@ type FrontendMTLSSpec struct {
 	// +nullable
 	ExtraDNSNames []string `json:"extraDnsNames,omitempty"`
 	// RequireClientAuth defines if the frontend requires a client certificate. Defaults to true.
-	// Set it to false to serve TLS to clients that authenticate with a token instead.
+	// Set it to false to serve TLS to clients that authenticate with a token instead. That requires
+	// spec.authorization with the default authorizer and claim mapper.
 	// +optional
 	RequireClientAuth *bool `json:"requireClientAuth,omitempty"`
 }
@@ -1009,7 +1010,7 @@ type AuthorizationSpec struct {
 	PermissionsClaimName string `json:"permissionsClaimName"`
 
 	// PermissionsRegex parses each value of the permissions claim. It must contain the named groups
-	// "namespace" and "role". It needs Temporal 1.30 or later.
+	// "namespace" and "role". It needs Temporal 1.29 or later and the default authorizer and claim mapper.
 	// +optional
 	PermissionsRegex string `json:"permissionsRegex,omitempty"`
 
@@ -1035,7 +1036,7 @@ type AuthorizationSpecJWTKeyProvider struct {
 	KeySourceURIs []string `json:"keySourceURIs"`
 
 	// RefreshInterval defines the time interval at which temporal should refresh the JWT signing keys from
-	// the specified URIs.
+	// the specified URIs. Defaults to 1 minute.
 	// +optional
 	RefreshInterval *metav1.Duration `json:"refreshInterval"`
 }

@@ -514,7 +514,7 @@ string
 <td>
 <em>(Optional)</em>
 <p>PermissionsRegex parses each value of the permissions claim. It must contain the named groups
-&ldquo;namespace&rdquo; and &ldquo;role&rdquo;. It needs Temporal 1.30 or later.</p>
+&ldquo;namespace&rdquo; and &ldquo;role&rdquo;. It needs Temporal 1.29 or later and the default authorizer and claim mapper.</p>
 </td>
 </tr>
 <tr>
@@ -592,7 +592,7 @@ Kubernetes meta/v1.Duration
 <td>
 <em>(Optional)</em>
 <p>RefreshInterval defines the time interval at which temporal should refresh the JWT signing keys from
-the specified URIs.</p>
+the specified URIs. Defaults to 1 minute.</p>
 </td>
 </tr>
 </tbody>
@@ -1795,7 +1795,8 @@ bool
 <td>
 <em>(Optional)</em>
 <p>RequireClientAuth defines if the frontend requires a client certificate. Defaults to true.
-Set it to false to serve TLS to clients that authenticate with a token instead.</p>
+Set it to false to serve TLS to clients that authenticate with a token instead. That requires
+spec.authorization with the default authorizer and claim mapper.</p>
 </td>
 </tr>
 </tbody>
