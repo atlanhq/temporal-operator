@@ -22,6 +22,7 @@ import (
 	"go.temporal.io/server/common/config"
 	"go.temporal.io/server/common/dynamicconfig"
 	"go.temporal.io/server/common/log"
+	"go.temporal.io/server/common/metrics"
 	"go.temporal.io/server/common/telemetry"
 )
 
@@ -30,7 +31,7 @@ import (
 // Starting from Temporal 1.25, in persistence, AdvancedVisibilityStore is no longer supported.
 type Config struct {
 	// Global is process-wide service-related configuration
-	Global config.Global `yaml:"global"`
+	Global Global `yaml:"global"`
 	// Persistence contains the configuration for temporal datastores
 	Persistence Persistence `yaml:"persistence"`
 	// Log is the logging config
@@ -52,6 +53,27 @@ type Config struct {
 	NamespaceDefaults config.NamespaceDefaults `yaml:"namespaceDefaults"`
 	// ExporterConfig allows the specification of process-wide OTEL exporters
 	ExporterConfig telemetry.ExportConfig `yaml:"otel"`
+}
+
+// Global restates the server's config.Global so that Authorization can carry fields newer servers read.
+type Global struct {
+	// Membership is the ringpop related configuration
+	Membership config.Membership `yaml:"membership"`
+	// PProf is the PProf configuration
+	PProf config.PProf `yaml:"pprof"`
+	// TLS controls the communication encryption configuration
+	TLS config.RootTLS `yaml:"tls"`
+	// Metrics is the metrics subsystem configuration
+	Metrics *metrics.Config `yaml:"metrics"`
+	// Authorization is the settings for authentication and authorization
+	Authorization Authorization `yaml:"authorization"`
+}
+
+// Authorization adds the settings Temporal 1.30 reads to the server's config.Authorization.
+type Authorization struct {
+	config.Authorization `yaml:",inline"`
+	// PermissionsRegex parses each value of the permissions claim.
+	PermissionsRegex string `yaml:"permissionsRegex,omitempty"`
 }
 
 type Persistence struct {

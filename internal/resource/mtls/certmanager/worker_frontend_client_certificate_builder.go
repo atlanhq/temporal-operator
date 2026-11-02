@@ -28,7 +28,7 @@ type WorkerFrontendClientCertificateBuilder struct {
 
 func NewWorkerFrontendClientCertificateBuilder(instance *v1beta1.TemporalCluster, scheme *runtime.Scheme) *WorkerFrontendClientCertificateBuilder {
 	return &WorkerFrontendClientCertificateBuilder{
-		GenericFrontendClientCertificateBuilder: NewGenericFrontendClientCertificateBuilder(instance, scheme, "worker"),
+		GenericFrontendClientCertificateBuilder: NewGenericFrontendClientCertificateBuilder(instance, scheme, "worker", v1beta1.FrontendCertificateAuthority),
 	}
 }
 

@@ -82,6 +82,20 @@ func (b *DeploymentBuilder) Update(object client.Object) error {
 	)
 
 	address := fmt.Sprintf("%s:%d", b.instance.ChildResourceName(meta.FrontendService), *b.instance.Spec.Services.Frontend.Port)
+	// certificate names the cluster certificate admintools presents, if any, and serverName the server it verifies.
+	var certificate, serverName string
+	switch {
+	case b.instance.Spec.Services.InternalFrontend.IsEnabled():
+		address = b.instance.InternalFrontendAddress()
+		if b.instance.MTLSWithCertManagerEnabled() && b.instance.Spec.MTLS.InternodeEnabled() {
+			certificate = certmanager.InternodeCertificate
+			serverName = b.instance.Spec.MTLS.Internode.ServerName(b.instance)
+		}
+	case b.instance.MTLSWithCertManagerEnabled() && b.instance.Spec.MTLS.FrontendEnabled():
+		certificate = certmanager.AdmintoolsFrontendClientCertificate
+		serverName = b.instance.Spec.MTLS.Frontend.ServerName(b.instance)
+	}
+
 	env := []corev1.EnvVar{
 		{
 			Name:  "TEMPORAL_CLI_ADDRESS", // tctl
@@ -96,19 +110,19 @@ func (b *DeploymentBuilder) Update(object client.Object) error {
 	volumes := []corev1.Volume{}
 	volumeMounts := []corev1.VolumeMount{}
 
-	if b.instance.MTLSWithCertManagerEnabled() && b.instance.Spec.MTLS.FrontendEnabled() {
+	if certificate != "" {
 		volumeMounts = append(volumeMounts,
 			corev1.VolumeMount{
-				Name:      certmanager.AdmintoolsFrontendClientCertificate,
+				Name:      certificate,
 				MountPath: admintoolsCertsMountPath,
 			},
 		)
 		volumes = append(volumes,
 			corev1.Volume{
-				Name: certmanager.AdmintoolsFrontendClientCertificate,
+				Name: certificate,
 				VolumeSource: corev1.VolumeSource{
 					Secret: &corev1.SecretVolumeSource{
-						SecretName:  b.instance.ChildResourceName(certmanager.AdmintoolsFrontendClientCertificate),
+						SecretName:  b.instance.ChildResourceName(certificate),
 						DefaultMode: ptr.To[int32](corev1.SecretVolumeSourceDefaultMode),
 					},
 				},
@@ -116,9 +130,9 @@ func (b *DeploymentBuilder) Update(object client.Object) error {
 		)
 
 		// Add tctl environment variables
-		env = append(env, certmanager.GetTLSEnvironmentVariables(b.instance, "TEMPORAL_CLI", admintoolsCertsMountPath)...)
+		env = append(env, certmanager.GetTLSEnvironmentVariables("TEMPORAL_CLI", admintoolsCertsMountPath, serverName)...)
 		// Add temporal cli environment variables (>= 0.9.0)
-		env = append(env, certmanager.GetTLSEnvironmentVariables(b.instance, "TEMPORAL", admintoolsCertsMountPath)...)
+		env = append(env, certmanager.GetTLSEnvironmentVariables("TEMPORAL", admintoolsCertsMountPath, serverName)...)
 	}
 
 	deployment.Spec.Replicas = ptr.To[int32](1)

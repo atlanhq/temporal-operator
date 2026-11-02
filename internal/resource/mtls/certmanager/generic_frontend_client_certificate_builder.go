@@ -35,13 +35,16 @@ type GenericFrontendClientCertificateBuilder struct {
 	scheme   *runtime.Scheme
 	// name defines the name of the certificate
 	name string
+	// authority is the intermediate CA that signs the certificate
+	authority v1beta1.ClientCertificateAuthority
 }
 
-func NewGenericFrontendClientCertificateBuilder(instance *v1beta1.TemporalCluster, scheme *runtime.Scheme, clientName string) *GenericFrontendClientCertificateBuilder {
+func NewGenericFrontendClientCertificateBuilder(instance *v1beta1.TemporalCluster, scheme *runtime.Scheme, clientName string, authority v1beta1.ClientCertificateAuthority) *GenericFrontendClientCertificateBuilder {
 	return &GenericFrontendClientCertificateBuilder{
-		instance: instance,
-		scheme:   scheme,
-		name:     clientName,
+		instance:  instance,
+		scheme:    scheme,
+		name:      clientName,
+		authority: authority,
 	}
 }
 
@@ -58,6 +61,10 @@ func (b *GenericFrontendClientCertificateBuilder) Build() client.Object {
 
 func (b *GenericFrontendClientCertificateBuilder) Update(object client.Object) error {
 	certificate := object.(*certmanagerv1.Certificate)
+	issuer := frontendIntermediateCAIssuer
+	if b.authority == v1beta1.InternodeCertificateAuthority {
+		issuer = internodeIntermediateCAIssuer
+	}
 	certificate.Labels = object.GetLabels()
 	certificate.Annotations = object.GetAnnotations()
 	certificate.Spec = certmanagerv1.CertificateSpec{
@@ -75,7 +82,7 @@ func (b *GenericFrontendClientCertificateBuilder) Update(object client.Object) e
 			fmt.Sprintf("%s.%s", b.name, b.instance.ServerName()),
 		},
 		IssuerRef: certmanagermeta.ObjectReference{
-			Name: b.instance.ChildResourceName(frontendIntermediateCAIssuer),
+			Name: b.instance.ChildResourceName(issuer),
 			Kind: certmanagerv1.IssuerKind,
 		},
 	}

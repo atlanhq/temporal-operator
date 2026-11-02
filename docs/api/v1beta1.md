@@ -506,6 +506,19 @@ string
 </tr>
 <tr>
 <td>
+<code>permissionsRegex</code><br>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>PermissionsRegex parses each value of the permissions claim. It must contain the named groups
+&ldquo;namespace&rdquo; and &ldquo;role&rdquo;. It needs Temporal 1.29 or later and the default authorizer and claim mapper.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>authorizer</code><br>
 <em>
 string
@@ -579,7 +592,7 @@ Kubernetes meta/v1.Duration
 <td>
 <em>(Optional)</em>
 <p>RefreshInterval defines the time interval at which temporal should refresh the JWT signing keys from
-the specified URIs.</p>
+the specified URIs. Defaults to 1 minute.</p>
 </td>
 </tr>
 </tbody>
@@ -862,6 +875,13 @@ It defaults to 1 year.</p>
 </table>
 </div>
 </div>
+<h3 id="temporal.io/v1beta1.ClientCertificateAuthority">ClientCertificateAuthority
+(<code>string</code> alias)</h3>
+<p>
+(<em>Appears on:</em>
+<a href="#temporal.io/v1beta1.TemporalClusterClientSpec">TemporalClusterClientSpec</a>)
+</p>
+<p>ClientCertificateAuthority is the intermediate CA that signs a client&rsquo;s certificate.</p>
 <h3 id="temporal.io/v1beta1.ClusterArchivalSpec">ClusterArchivalSpec
 </h3>
 <p>
@@ -1763,6 +1783,20 @@ bool
 <p>ExtraDNSNames is a list of additional DNS names associated with the TemporalCluster.
 These DNS names can be used for accessing the TemporalCluster from external services.
 The DNS names specified here will be added to the TLS certificate for secure communication.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>requireClientAuth</code><br>
+<em>
+bool
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>RequireClientAuth defines if the frontend requires a client certificate. Defaults to true.
+Set it to false to serve TLS to clients that authenticate with a token instead. That requires
+spec.authorization with the default authorizer and claim mapper.</p>
 </td>
 </tr>
 </tbody>
@@ -4872,6 +4906,21 @@ ObjectReference
 <p>Reference to the temporal cluster the client will get access to.</p>
 </td>
 </tr>
+<tr>
+<td>
+<code>certificateAuthority</code><br>
+<em>
+<a href="#temporal.io/v1beta1.ClientCertificateAuthority">
+ClientCertificateAuthority
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>CertificateAuthority is the intermediate CA that signs the client&rsquo;s certificate: frontend (the
+default) for the public frontend, or internode for internal-frontend, which needs internode mTLS only.</p>
+</td>
+</tr>
 </table>
 </td>
 </tr>
@@ -4919,6 +4968,21 @@ ObjectReference
 </td>
 <td>
 <p>Reference to the temporal cluster the client will get access to.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>certificateAuthority</code><br>
+<em>
+<a href="#temporal.io/v1beta1.ClientCertificateAuthority">
+ClientCertificateAuthority
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>CertificateAuthority is the intermediate CA that signs the client&rsquo;s certificate: frontend (the
+default) for the public frontend, or internode for internal-frontend, which needs internode mTLS only.</p>
 </td>
 </tr>
 </tbody>

@@ -22,10 +22,26 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// ClientCertificateAuthority is the intermediate CA that signs a client's certificate.
+type ClientCertificateAuthority string
+
+const (
+	// FrontendCertificateAuthority signs certificates for the public frontend.
+	FrontendCertificateAuthority ClientCertificateAuthority = "frontend"
+	// InternodeCertificateAuthority signs certificates for internal-frontend, which serves with the
+	// internode certificate and admits its callers as cluster members.
+	InternodeCertificateAuthority ClientCertificateAuthority = "internode"
+)
+
 // TemporalClusterClientSpec defines the desired state of ClusterClient.
 type TemporalClusterClientSpec struct {
 	// Reference to the temporal cluster the client will get access to.
 	ClusterRef ObjectReference `json:"clusterRef"`
+	// CertificateAuthority is the intermediate CA that signs the client's certificate: frontend (the
+	// default) for the public frontend, or internode for internal-frontend, which needs internode mTLS only.
+	// +kubebuilder:validation:Enum=frontend;internode
+	// +optional
+	CertificateAuthority ClientCertificateAuthority `json:"certificateAuthority,omitempty"`
 }
 
 // TemporalClusterClientStatus defines the observed state of ClusterClient.

@@ -18,8 +18,11 @@
 package authorization
 
 import (
+	"time"
+
 	"github.com/alexandrevilain/temporal-operator/api/v1beta1"
-	"go.temporal.io/server/common/config"
+	"github.com/alexandrevilain/temporal-operator/pkg/temporal/config"
+	temporalconfig "go.temporal.io/server/common/config"
 )
 
 // ToTemporalAuthorization transforms v1beta1.AuthorizationSpec to temporal's authorization config.
@@ -28,13 +31,22 @@ func ToTemporalAuthorization(authorization *v1beta1.AuthorizationSpec) config.Au
 		return config.Authorization{}
 	}
 
+	// Temporal refreshes keys only for a positive interval, so an unset one loads them once.
+	var refreshInterval time.Duration
+	if authorization.JWTKeyProvider.RefreshInterval != nil {
+		refreshInterval = authorization.JWTKeyProvider.RefreshInterval.Duration
+	}
+
 	return config.Authorization{
-		JWTKeyProvider: config.JWTKeyProvider{
-			KeySourceURIs:   authorization.JWTKeyProvider.KeySourceURIs,
-			RefreshInterval: authorization.JWTKeyProvider.RefreshInterval.Duration,
+		Authorization: temporalconfig.Authorization{
+			JWTKeyProvider: temporalconfig.JWTKeyProvider{
+				KeySourceURIs:   authorization.JWTKeyProvider.KeySourceURIs,
+				RefreshInterval: refreshInterval,
+			},
+			PermissionsClaimName: authorization.PermissionsClaimName,
+			Authorizer:           authorization.Authorizer,
+			ClaimMapper:          authorization.ClaimMapper,
 		},
-		PermissionsClaimName: authorization.PermissionsClaimName,
-		Authorizer:           authorization.Authorizer,
-		ClaimMapper:          authorization.ClaimMapper,
+		PermissionsRegex: authorization.PermissionsRegex,
 	}
 }

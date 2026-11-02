@@ -21,7 +21,9 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/alexandrevilain/temporal-operator/api/v1beta1"
 	"github.com/alexandrevilain/temporal-operator/internal/discovery"
@@ -125,6 +127,17 @@ func (w *TemporalClusterWebhook) validateCluster(cluster *v1beta1.TemporalCluste
 				fmt.Sprintf("Unsupported temporal version (supported: %s)", version.SupportedVersionsRange.String()),
 			),
 		)
+	}
+
+	permissionsRegexSet := cluster.Spec.Authorization != nil && cluster.Spec.Authorization.PermissionsRegex != ""
+	if permissionsRegexSet {
+		errs = append(errs, validatePermissionsRegex(cluster)...)
+	}
+
+	frontendWithoutClientAuth := cluster.MTLSWithCertManagerEnabled() && cluster.Spec.MTLS.FrontendEnabled() &&
+		!cluster.Spec.MTLS.Frontend.ClientAuthRequired()
+	if permissionsRegexSet || frontendWithoutClientAuth {
+		errs = append(errs, validateDefaultAuthorization(cluster.Spec.Authorization)...)
 	}
 
 	// Ensure ElasticSearch v6 is not used with cluster >= 1.18.0
@@ -517,4 +530,42 @@ func (w *TemporalClusterWebhook) SetupWebhookWithManager(mgr ctrl.Manager) error
 		WithDefaulter(w).
 		WithValidator(w).
 		Complete()
+}
+
+// validatePermissionsRegex refuses a permissions regex the cluster would ignore or fail to start with.
+func validatePermissionsRegex(cluster *v1beta1.TemporalCluster) field.ErrorList {
+	path := field.NewPath("spec", "authorization", "permissionsRegex")
+	regex := cluster.Spec.Authorization.PermissionsRegex
+	if !cluster.Spec.Version.GreaterOrEqual(version.V1_29_0) {
+		return field.ErrorList{field.Forbidden(path, "temporal cluster version < 1.29.0 doesn't support permissionsRegex")}
+	}
+	compiled, err := regexp.Compile(regex)
+	if err != nil {
+		return field.ErrorList{field.Invalid(path, regex, err.Error())}
+	}
+	var errs field.ErrorList
+	for _, group := range []string{"namespace", "role"} {
+		if compiled.SubexpIndex(group) < 0 {
+			errs = append(errs, field.Invalid(path, regex, fmt.Sprintf("must contain the named group %q", group)))
+		}
+	}
+	return errs
+}
+
+// validateDefaultAuthorization refuses an authorization the frontend would not enforce: unless both the
+// authorizer and the claim mapper are "default", Temporal lets every caller act as system admin.
+func validateDefaultAuthorization(authorization *v1beta1.AuthorizationSpec) field.ErrorList {
+	path := field.NewPath("spec", "authorization")
+	if authorization == nil {
+		return field.ErrorList{field.Required(path, "required when mTLS.frontend.requireClientAuth is false, otherwise every caller is system admin")}
+	}
+	const detail = `must be "default" when permissionsRegex is set or mTLS.frontend.requireClientAuth is false, otherwise every caller is system admin`
+	var errs field.ErrorList
+	if !strings.EqualFold(authorization.Authorizer, "default") {
+		errs = append(errs, field.Invalid(path.Child("authorizer"), authorization.Authorizer, detail))
+	}
+	if !strings.EqualFold(authorization.ClaimMapper, "default") {
+		errs = append(errs, field.Invalid(path.Child("claimMapper"), authorization.ClaimMapper, detail))
+	}
+	return errs
 }
