@@ -640,11 +640,17 @@ spec:
                             type: string
                           nullable: true
                           type: array
+                        requireAuthorizer:
+                          description: |-
+                            RequireAuthorizer defines if requireClientAuth: false requires spec.authorization with the default
+                            authorizer and claim mapper. Defaults to true. Set it to false only for a rollout that turns TLS on
+                            before authorization: every caller stays system admin until spec.authorization is set.
+                          type: boolean
                         requireClientAuth:
                           description: |-
                             RequireClientAuth defines if the frontend requires a client certificate. Defaults to true.
                             Set it to false to serve TLS to clients that authenticate with a token instead. That requires
-                            spec.authorization with the default authorizer and claim mapper.
+                            spec.authorization with the default authorizer and claim mapper, unless requireAuthorizer is false.
                           type: boolean
                       type: object
                     internode:

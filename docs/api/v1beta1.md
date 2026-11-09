@@ -1796,7 +1796,21 @@ bool
 <em>(Optional)</em>
 <p>RequireClientAuth defines if the frontend requires a client certificate. Defaults to true.
 Set it to false to serve TLS to clients that authenticate with a token instead. That requires
-spec.authorization with the default authorizer and claim mapper.</p>
+spec.authorization with the default authorizer and claim mapper, unless requireAuthorizer is false.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>requireAuthorizer</code><br>
+<em>
+bool
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>RequireAuthorizer defines if requireClientAuth: false requires spec.authorization with the default
+authorizer and claim mapper. Defaults to true. Set it to false only for a rollout that turns TLS on
+before authorization: every caller stays system admin until spec.authorization is set.</p>
 </td>
 </tr>
 </tbody>
