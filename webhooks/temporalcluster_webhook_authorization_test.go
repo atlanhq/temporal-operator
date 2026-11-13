@@ -176,3 +176,45 @@ func TestValidateFrontendWithoutClientCertificates(t *testing.T) {
 		})
 	}
 }
+
+// The rollout this opt-in exists for updates a running cluster twice: TLS on before authorization,
+// then the opt-in removed once spec.authorization sets the default authorizer and claim mapper.
+func TestValidateFrontendWithoutClientCertificatesOnUpdate(t *testing.T) {
+	plaintext := clusterWithFrontendTLS(nil, nil)
+	plaintext.Spec.MTLS.Frontend.Enabled = false
+	optedIn := clusterWithFrontendTLS(ptr.To(false), nil)
+	optedIn.Spec.MTLS.Frontend.RequireAuthorizer = ptr.To(false)
+	tests := map[string]struct {
+		oldCluster      *v1beta1.TemporalCluster
+		newCluster      *v1beta1.TemporalCluster
+		expectedErr     string
+		expectedWarning string
+	}{
+		"plaintext to TLS before authorization accepted when requireAuthorizer is false, with a warning": {
+			oldCluster:      plaintext,
+			newCluster:      optedIn,
+			expectedWarning: "spec.mTLS.frontend.requireAuthorizer is false",
+		},
+		"requireAuthorizer removed without authorization refused": {
+			oldCluster:  optedIn,
+			newCluster:  clusterWithFrontendTLS(ptr.To(false), nil),
+			expectedErr: "spec.authorization: Required value",
+		},
+	}
+	wh := &webhooks.TemporalClusterWebhook{AvailableAPIs: &discovery.AvailableAPIs{CertManager: true}}
+	for name, test := range tests {
+		t.Run(name, func(tt *testing.T) {
+			warns, err := wh.ValidateUpdate(context.Background(), test.oldCluster, test.newCluster)
+			if test.expectedWarning == "" {
+				assert.Empty(tt, warns)
+			} else {
+				assert.Contains(tt, strings.Join(warns, "\n"), test.expectedWarning)
+			}
+			if test.expectedErr == "" {
+				assert.NoError(tt, err)
+				return
+			}
+			assert.ErrorContains(tt, err, test.expectedErr)
+		})
+	}
+}

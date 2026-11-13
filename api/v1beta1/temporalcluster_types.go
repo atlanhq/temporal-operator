@@ -685,7 +685,8 @@ type FrontendMTLSSpec struct {
 	RequireClientAuth *bool `json:"requireClientAuth,omitempty"`
 	// RequireAuthorizer defines if requireClientAuth: false requires spec.authorization with the default
 	// authorizer and claim mapper. Defaults to true. Set it to false only for a rollout that turns TLS on
-	// before authorization: every caller stays system admin until spec.authorization is set.
+	// before authorization: every caller stays system admin until spec.authorization sets the default
+	// authorizer and claim mapper.
 	// +optional
 	RequireAuthorizer *bool `json:"requireAuthorizer,omitempty"`
 }
