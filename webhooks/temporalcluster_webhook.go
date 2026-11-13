@@ -136,8 +136,13 @@ func (w *TemporalClusterWebhook) validateCluster(cluster *v1beta1.TemporalCluste
 
 	frontendWithoutClientAuth := cluster.MTLSWithCertManagerEnabled() && cluster.Spec.MTLS.FrontendEnabled() &&
 		!cluster.Spec.MTLS.Frontend.ClientAuthRequired()
-	if permissionsRegexSet || frontendWithoutClientAuth {
+	if permissionsRegexSet || (frontendWithoutClientAuth && cluster.Spec.MTLS.Frontend.AuthorizerRequired()) {
 		errs = append(errs, validateDefaultAuthorization(cluster.Spec.Authorization)...)
+	}
+	if frontendWithoutClientAuth && !cluster.Spec.MTLS.Frontend.AuthorizerRequired() {
+		warns = append(warns,
+			"spec.mTLS.frontend.requireAuthorizer is false: unless spec.authorization sets the default authorizer and claim mapper, every caller is system admin. Remove requireAuthorizer once it does.",
+		)
 	}
 
 	// Ensure ElasticSearch v6 is not used with cluster >= 1.18.0

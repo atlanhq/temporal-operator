@@ -680,14 +680,25 @@ type FrontendMTLSSpec struct {
 	ExtraDNSNames []string `json:"extraDnsNames,omitempty"`
 	// RequireClientAuth defines if the frontend requires a client certificate. Defaults to true.
 	// Set it to false to serve TLS to clients that authenticate with a token instead. That requires
-	// spec.authorization with the default authorizer and claim mapper.
+	// spec.authorization with the default authorizer and claim mapper, unless requireAuthorizer is false.
 	// +optional
 	RequireClientAuth *bool `json:"requireClientAuth,omitempty"`
+	// RequireAuthorizer defines if requireClientAuth: false requires spec.authorization with the default
+	// authorizer and claim mapper. Defaults to true. Set it to false only for a rollout that turns TLS on
+	// before authorization: every caller stays system admin until spec.authorization sets the default
+	// authorizer and claim mapper.
+	// +optional
+	RequireAuthorizer *bool `json:"requireAuthorizer,omitempty"`
 }
 
 // ClientAuthRequired returns whether the frontend requires a client certificate.
 func (f FrontendMTLSSpec) ClientAuthRequired() bool {
 	return f.RequireClientAuth == nil || *f.RequireClientAuth
+}
+
+// AuthorizerRequired returns whether requireClientAuth: false requires the default authorizer and claim mapper.
+func (f FrontendMTLSSpec) AuthorizerRequired() bool {
+	return f.RequireAuthorizer == nil || *f.RequireAuthorizer
 }
 
 // ServerName returns frontend servername for mTLS certificates.
